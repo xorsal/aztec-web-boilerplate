@@ -21,6 +21,8 @@ import type {
 } from '@aztec/aztec.js/account';
 import type { CompleteAddress } from '@aztec/aztec.js/addresses';
 import { Eip712AccountContractArtifact } from '../artifacts/Eip712Account';
+import { Eip712AccountInterface } from './Eip712AccountInterface';
+import type { Eip712AuthWitnessProvider } from './Eip712AuthWitnessProvider';
 
 /**
  * AccountContract implementation for EIP-712 accounts that use
@@ -87,16 +89,25 @@ export class Eip712AccountContract implements AccountContract {
 
   /**
    * Returns the account interface for creating tx requests.
+   *
+   * Uses Eip712AccountInterface only for Eip712AuthWitnessProvider.
+   * Falls back to DefaultAccountInterface for other providers (e.g., mocks).
    */
   getInterface(
     address: CompleteAddress,
     chainInfo: ChainInfo
   ): AccountInterface {
-    return new DefaultAccountInterface(
-      this.getAuthWitnessProvider(address),
-      address,
-      chainInfo
-    );
+    const provider = this.getAuthWitnessProvider(address);
+
+    // Check if this is an Eip712AuthWitnessProvider (has hasPendingTxContext method)
+    const eip712Provider = provider as Eip712AuthWitnessProvider;
+    if (typeof eip712Provider.hasPendingTxContext === 'function') {
+      // Use Eip712AccountInterface which dynamically selects entrypoint
+      return new Eip712AccountInterface(provider, address, chainInfo);
+    }
+
+    // Use DefaultAccountInterface for other providers (mocks, etc.)
+    return new DefaultAccountInterface(provider, address, chainInfo);
   }
 
   /**

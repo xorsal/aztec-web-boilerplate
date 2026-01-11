@@ -4,8 +4,8 @@
  * Helper functions for building EIP-712 transaction context from contract interactions.
  */
 
-import type { ContractArtifact, FunctionArtifact, ABIParameter } from '@aztec/aztec.js/abi';
-import type { AztecAddress, Fr } from '@aztec/aztec.js';
+import type { ContractArtifact, FunctionArtifact, ABIParameter, AbiType } from '@aztec/aztec.js/abi';
+import type { AztecAddress } from '@aztec/aztec.js/addresses';
 import type { FunctionCallInput } from '../lib/eip712';
 
 /**
@@ -31,13 +31,23 @@ export function noirTypeToString(param: ABIParameter): string {
     case 'boolean':
       return 'bool';
     case 'string':
-      return 'str';
+      // Aztec uses str<length> format
+      return `str<${type.length}>`;
     case 'array':
       // For arrays, recursively convert the element type
+      // Note: Aztec uses [Type;length] (no space after semicolon)
       const elementType = noirTypeToString({ name: '', type: type.type, visibility: 'public' });
-      return `[${elementType}; ${type.length}]`;
+      return `[${elementType};${type.length}]`;
     case 'struct':
-      // For structs, just use the struct name
+      // For structs, expand fields to match Aztec's FunctionSignatureDecoder
+      // Aztec produces: (field1_type, field2_type, ...)
+      if (type.fields && type.fields.length > 0) {
+        const fieldTypes = type.fields.map((f: { name: string; type: AbiType }) =>
+          noirTypeToString({ name: f.name, type: f.type, visibility: 'public' })
+        ).join(',');
+        return `(${fieldTypes})`;
+      }
+      // Fallback for structs without fields
       return type.path.split('::').pop() || 'Struct';
     default:
       return 'Field'; // Default fallback

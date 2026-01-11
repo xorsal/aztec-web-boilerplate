@@ -122,6 +122,14 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
   }
 
   /**
+   * Check if there is pending transaction context.
+   * Used to determine which entrypoint to use (entrypoint5 vs entrypoint).
+   */
+  hasPendingTxContext(): boolean {
+    return this.pendingTxContext !== null;
+  }
+
+  /**
    * Create an auth witness for the given message hash.
    *
    * If pending tx context exists:
@@ -161,10 +169,8 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     }
 
     // Sign with MetaMask
-    const signature = await this.walletClient.signTypedData({
-      account: this.account,
-      ...typedData,
-    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const signature = await this.walletClient.signTypedData(typedData as any);
 
     // Parse signature (remove v, keep r || s)
     const sigBytes = hexToBytes(signature);
