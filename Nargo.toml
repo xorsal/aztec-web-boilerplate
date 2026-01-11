@@ -1,0 +1,5 @@
+[workspace]
+members = [
+    "contracts/ecdsa_k_eth_signer_account",
+    "contracts/eip712_account",
+]
