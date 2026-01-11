@@ -86,6 +86,7 @@ export class Eip712Account {
   private publicKeyX: Uint8Array;
   private publicKeyY: Uint8Array;
   private encoder: Eip712Encoder;
+  private _chainId: bigint;
 
   constructor(privateKey?: Hex, chainId: bigint = 31337n) {
     if (privateKey) {
@@ -103,7 +104,15 @@ export class Eip712Account {
     this.publicKeyX = publicKey.slice(1, 33);
     this.publicKeyY = publicKey.slice(33, 65);
 
+    this._chainId = chainId;
     this.encoder = new Eip712Encoder({ chainId });
+  }
+
+  /**
+   * Get the chain ID used for EIP-712 domain
+   */
+  get chainId(): bigint {
+    return this._chainId;
   }
 
   /**
@@ -263,6 +272,40 @@ export class Eip712Account {
       txNonce,
       verifyingContract,
       salt
+    );
+    const capsuleData = this.serializeWitness5ToCapsule(oracleData);
+    return new Capsule(contractAddress, new Fr(EIP712_WITNESS_5_SLOT), capsuleData);
+  }
+
+  /**
+   * Create a Capsule for 5-call entrypoint using an external signature.
+   * This is used when signing with MetaMask instead of the local private key.
+   *
+   * @param calls - 1-5 function calls to authorize
+   * @param txNonce - Transaction nonce (must match app_payload.tx_nonce)
+   * @param externalSignature - The 64-byte ECDSA signature (r || s) from external signer
+   * @param contractAddress - The account contract address
+   * @param verifyingContract - Optional verifying contract (defaults to sandbox rollup)
+   * @param salt - Optional salt for EIP-712 domain
+   */
+  createWitnessCapsule5WithExternalSignature(
+    calls: FunctionCallInput[],
+    txNonce: bigint,
+    externalSignature: Uint8Array,
+    contractAddress: AztecAddress,
+    verifyingContract: Hex = DEFAULT_VERIFYING_CONTRACT,
+    salt: Hex = DEFAULT_APP_DOMAIN.salt
+  ): Capsule {
+    if (externalSignature.length !== 64) {
+      throw new Error(`Invalid signature length: ${externalSignature.length}, expected 64`);
+    }
+
+    // Build oracle data with external signature
+    const oracleData = this.buildOracleData5(
+      calls,
+      this.chainId,
+      hexToBytes(salt),
+      externalSignature
     );
     const capsuleData = this.serializeWitness5ToCapsule(oracleData);
     return new Capsule(contractAddress, new Fr(EIP712_WITNESS_5_SLOT), capsuleData);

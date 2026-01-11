@@ -2,7 +2,10 @@
  * EVMSigner - External signer implementation for EVM wallets
  *
  * Works with any EVM wallet via EIP-6963 discovery.
- * Uses personal_sign for signing Aztec transactions.
+ * Supports two signing modes:
+ * 1. EIP-712 (default): Human-readable typed data signing via eth_signTypedData_v4
+ * 2. personal_sign: Raw hash signing (fallback mode)
+ *
  * The user's private key never leaves the wallet.
  */
 
@@ -10,13 +13,17 @@ import { type Hex, keccak256, toBytes } from 'viem';
 import type { AuthWitnessProvider } from '@aztec/aztec.js/account';
 import type { CompleteAddress } from '@aztec/aztec.js/addresses';
 import { MetaMaskAuthWitnessProvider } from '../accounts/MetaMaskAuthWitnessProvider';
+import {
+  Eip712AuthWitnessProvider,
+  type Eip712AuthWitnessProviderOptions,
+} from '../accounts/Eip712AuthWitnessProvider';
 import { getEIP6963Service } from '../services/evm/EIP6963Service';
 import { ExternalSignerType } from '../types/aztec';
 import {
   recoverPublicKeyFromSignature,
   getPublicKeyRecoveryMessage,
 } from '../utils/evmPublicKeyRecovery';
-import type { ExternalSigner, ECDSAPublicKey } from './types';
+import type { ExternalSigner, ECDSAPublicKey, SigningMode, CapsuleInjector } from './types';
 import type { EVMWalletService } from '../services/evm/EVMWalletService';
 
 export class EVMSigner implements ExternalSigner {
@@ -29,9 +36,70 @@ export class EVMSigner implements ExternalSigner {
   private cachedSecretKey: Buffer | null = null;
   private cachedSalt: Buffer | null = null;
 
+  // EIP-712 support
+  private signingMode: SigningMode = 'eip712';
+  private capsuleInjector: CapsuleInjector | null = null;
+  private authWitnessProvider: AuthWitnessProvider | null = null;
+  private chainId: bigint = 31337n;
+  private debugEip712: boolean = false;
+
   constructor(evmService: EVMWalletService, rdns?: string) {
     this.evmService = evmService;
     this.rdns = rdns;
+  }
+
+  /**
+   * Set the capsule injector for EIP-712 signing.
+   * Must be called after PXE initialization before creating transactions.
+   *
+   * @param injector - The capsule injector (typically pxe.pushCapsule bound)
+   */
+  setCapsuleInjector(injector: CapsuleInjector): void {
+    this.capsuleInjector = injector;
+  }
+
+  /**
+   * Set the chain ID for EIP-712 domain.
+   * Defaults to 31337 (local sandbox).
+   *
+   * @param chainId - The L1 chain ID
+   */
+  setChainId(chainId: bigint): void {
+    this.chainId = chainId;
+  }
+
+  /**
+   * Set the signing mode.
+   *
+   * @param mode - 'eip712' for human-readable signing, 'personal_sign' for raw hash
+   */
+  setSigningMode(mode: SigningMode): void {
+    this.signingMode = mode;
+  }
+
+  /**
+   * Get the current signing mode.
+   */
+  getSigningMode(): SigningMode {
+    return this.signingMode;
+  }
+
+  /**
+   * Enable debug logging for EIP-712 signing.
+   * When enabled, logs the typed data being sent to MetaMask.
+   *
+   * @param enabled - Whether to enable debug logging
+   */
+  setDebugEip712(enabled: boolean): void {
+    this.debugEip712 = enabled;
+  }
+
+  /**
+   * Get the auth witness provider if one has been created.
+   * Used to set pending transaction context for EIP-712 signing.
+   */
+  getAuthWitnessProvider(): AuthWitnessProvider | null {
+    return this.authWitnessProvider;
   }
 
   isAvailable(): boolean {
@@ -111,7 +179,7 @@ export class EVMSigner implements ExternalSigner {
     return publicKey;
   }
 
-  createAuthWitnessProvider(_address: CompleteAddress): AuthWitnessProvider {
+  createAuthWitnessProvider(completeAddress: CompleteAddress): AuthWitnessProvider {
     const walletClient = this.evmService.getWalletClient();
     const address = this.evmService.getAddress();
 
@@ -119,7 +187,32 @@ export class EVMSigner implements ExternalSigner {
       throw new Error('EVM wallet not connected');
     }
 
-    return new MetaMaskAuthWitnessProvider(walletClient, address);
+    // EIP-712 mode: requires capsule injector for witness data
+    if (this.signingMode === 'eip712') {
+      if (!this.capsuleInjector) {
+        console.warn(
+          '[EVMSigner] No capsule injector set, falling back to personal_sign mode'
+        );
+        this.authWitnessProvider = new MetaMaskAuthWitnessProvider(walletClient, address);
+        return this.authWitnessProvider;
+      }
+
+      const options: Eip712AuthWitnessProviderOptions = {
+        walletClient,
+        account: address as Hex,
+        contractAddress: completeAddress.address,
+        capsuleInjector: this.capsuleInjector,
+        chainId: this.chainId,
+        debug: this.debugEip712,
+      };
+
+      this.authWitnessProvider = new Eip712AuthWitnessProvider(options);
+      return this.authWitnessProvider;
+    }
+
+    // personal_sign mode: basic hash signing
+    this.authWitnessProvider = new MetaMaskAuthWitnessProvider(walletClient, address);
+    return this.authWitnessProvider;
   }
 
   async deriveSecretKey(): Promise<Buffer> {
@@ -161,6 +254,8 @@ export class EVMSigner implements ExternalSigner {
     this.cachedPublicKey = null;
     this.cachedSecretKey = null;
     this.cachedSalt = null;
+    this.authWitnessProvider = null;
+    this.capsuleInjector = null;
   }
 }
 

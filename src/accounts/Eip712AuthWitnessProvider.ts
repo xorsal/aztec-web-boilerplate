@@ -18,9 +18,10 @@ import type { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/aztec.js/fields';
 import { AuthWitness } from '@aztec/stdlib/auth-witness';
 import type { Capsule } from '@aztec/stdlib/tx';
-import type { Hex, WalletClient } from 'viem';
+import { type Hex, type WalletClient, hexToBytes } from 'viem';
 import {
   Eip712Account,
+  Eip712Encoder,
   type FunctionCallInput,
 } from '../lib/eip712';
 import { DEFAULT_VERIFYING_CONTRACT } from '../lib/eip712/eip712-types';
@@ -48,6 +49,8 @@ export interface Eip712AuthWitnessProviderOptions {
   chainId?: bigint;
   /** Optional verifying contract address */
   verifyingContract?: Hex;
+  /** Enable debug logging to see typed data sent to MetaMask */
+  debug?: boolean;
 }
 
 /**
@@ -82,6 +85,7 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
   private readonly chainId: bigint;
   private readonly verifyingContract: Hex;
   private readonly eip712Account: Eip712Account;
+  private readonly debug: boolean;
 
   // Pending transaction context (set before tx simulation)
   private pendingTxContext: PendingTxContext | null = null;
@@ -93,6 +97,7 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     this.capsuleInjector = options.capsuleInjector;
     this.chainId = options.chainId ?? 31337n;
     this.verifyingContract = options.verifyingContract ?? DEFAULT_VERIFYING_CONTRACT;
+    this.debug = options.debug ?? false;
 
     // Create Eip712Account for signing (we need the private key for local signing)
     // For MetaMask integration, we'll use signTypedData directly
@@ -150,6 +155,11 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     // Build EIP-712 typed data
     const typedData = this.buildTypedData(context.calls, context.txNonce);
 
+    // Debug: Log what will be shown to the user in MetaMask
+    if (this.debug) {
+      this.logTypedData(typedData, context);
+    }
+
     // Sign with MetaMask
     const signature = await this.walletClient.signTypedData({
       account: this.account,
@@ -160,10 +170,11 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     const sigBytes = hexToBytes(signature);
     const ecdsaSignature = sigBytes.slice(0, 64);
 
-    // Build capsule data
-    const capsule = await this.eip712Account.createWitnessCapsule5(
+    // Build capsule data using MetaMask signature (not internal signing)
+    const capsule = this.eip712Account.createWitnessCapsule5WithExternalSignature(
       context.calls,
       context.txNonce,
+      ecdsaSignature,
       this.contractAddress,
       this.verifyingContract
     );
@@ -211,9 +222,6 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
    * Build EIP-712 typed data for MetaMask signing.
    */
   private buildTypedData(calls: FunctionCallInput[], txNonce: bigint) {
-    // Import encoder to build typed data
-    const { Eip712Encoder, DEFAULT_APP_DOMAIN } = require('../lib/eip712/eip712-encoder');
-
     const encoder = new Eip712Encoder({ chainId: this.chainId });
 
     // Convert FunctionCallInput to FunctionCall format
@@ -231,6 +239,40 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
       txNonce,
       this.verifyingContract
     );
+  }
+
+  /**
+   * Log the EIP-712 typed data for debugging.
+   * Shows what the user will see in MetaMask.
+   */
+  private logTypedData(typedData: any, context: PendingTxContext): void {
+    const separator = '─'.repeat(60);
+
+    console.log('\n' + separator);
+    console.log('🔐 EIP-712 CLEAR SIGNING - MetaMask Will Show:');
+    console.log(separator);
+
+    // Domain info
+    console.log('\n📋 Domain:');
+    console.log(`   Name: ${typedData.domain.name}`);
+    console.log(`   Version: ${typedData.domain.version}`);
+    console.log(`   Chain ID: ${typedData.domain.chainId}`);
+    console.log(`   Verifying Contract: ${typedData.domain.verifyingContract}`);
+
+    // Function calls
+    console.log('\n📝 Function Calls:');
+    context.calls.forEach((call, index) => {
+      console.log(`\n   [${index + 1}] ${call.functionSignature}`);
+      console.log(`       Target: 0x${call.targetAddress.toString(16).padStart(64, '0').slice(0, 16)}...`);
+      console.log(`       Args: [${call.args.map(a => a.toString()).join(', ')}]`);
+    });
+
+    // Transaction nonce
+    console.log(`\n🔢 Tx Nonce: ${context.txNonce}`);
+
+    console.log('\n' + separator);
+    console.log('📱 Waiting for MetaMask signature...');
+    console.log(separator + '\n');
   }
 }
 

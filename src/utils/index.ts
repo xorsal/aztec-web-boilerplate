@@ -16,6 +16,15 @@ export {
   type WaitForReceiptOptions,
   type WaitForReceiptResult,
 } from './txReceipt';
+export {
+  buildFunctionSignature,
+  buildFunctionCallInput,
+  buildFunctionCallInputs,
+  argsToFields,
+  argToField,
+  noirTypeToString,
+  findFunctionArtifact,
+} from './eip712-helpers';
 
 /** CAIP account format: "namespace:chainId:address" (e.g., "aztec:1:0x123...") */
 type CaipAccountString = string;

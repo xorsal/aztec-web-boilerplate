@@ -35,6 +35,7 @@ import type {
   WalletConnectorId,
 } from '../types/walletConnector';
 import type { Hex } from 'viem';
+import type { Eip712AuthWitnessProvider } from '../accounts/Eip712AuthWitnessProvider';
 
 export interface NetworkContextType {
   currentConfig: NetworkConfig;
@@ -70,6 +71,8 @@ export interface WalletContextType {
   disconnect: () => Promise<void>;
   reinitialize: () => Promise<void>;
   connectWith: (connectorId: WalletConnectorId) => Promise<WalletConnector>;
+  /** EIP-712 auth witness provider for setting transaction context (External Signer only) */
+  authWitnessProvider: Eip712AuthWitnessProvider | null;
 }
 
 // Combined context type
@@ -273,6 +276,11 @@ export const UniversalWalletProvider: React.FC<
     disconnect: handleDisconnect,
     reinitialize: handleReinitialize,
     connectWith,
+    // Expose EIP-712 auth witness provider (only available for External Signer wallets)
+    authWitnessProvider:
+      activeWalletType === WalletType.EXTERNAL_SIGNER
+        ? externalSigner.services.authWitnessProvider
+        : null,
   };
 
   return (

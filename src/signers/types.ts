@@ -95,3 +95,18 @@ export interface ExternalSigner {
  * Factory function type for creating external signers
  */
 export type ExternalSignerFactory = () => ExternalSigner;
+
+/**
+ * Signing mode for external signers
+ * - 'personal_sign': Uses personal_sign (raw hash signing) - basic mode
+ * - 'eip712': Uses eth_signTypedData_v4 for human-readable signing - recommended
+ */
+export type SigningMode = 'personal_sign' | 'eip712';
+
+/**
+ * Interface for injecting capsules into PXE
+ * Used by EIP-712 signing to deliver witness data to Noir contracts
+ */
+export interface CapsuleInjector {
+  pushCapsule(capsule: import('@aztec/stdlib/tx').Capsule): Promise<void>;
+}

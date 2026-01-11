@@ -4,11 +4,13 @@ import { Fr } from '@aztec/aztec.js/fields';
 import { createLogger } from '@aztec/aztec.js/log';
 import { createAztecNodeClient, type AztecNode } from '@aztec/aztec.js/node';
 import { SPONSORED_FPC_SALT } from '@aztec/constants';
+import type { AztecAsyncKVStore } from '@aztec/kv-store';
 import { createStore } from '@aztec/kv-store/indexeddb';
 import { SponsoredFPCContractArtifact } from '@aztec/noir-contracts.js/SponsoredFPC';
 import { createPXE } from '@aztec/pxe/client/lazy';
 import { getPXEConfig } from '@aztec/pxe/config';
 import type { PXE } from '@aztec/pxe/server';
+import type { Capsule } from '@aztec/stdlib/tx';
 import { MinimalWallet } from '../../../utils/MinimalWallet';
 import { getEnv } from '../../../utils/env';
 import { AztecStorageService } from '../storage';
@@ -23,6 +25,11 @@ export interface SharedPXEInstance {
   wallet: MinimalWallet;
   storageService: AztecStorageService;
   getSponsoredFeePaymentMethod: () => Promise<SponsoredFeePaymentMethod>;
+  /**
+   * Store a capsule to the PXE's persistent storage.
+   * The capsule will be available to contracts via oracle calls.
+   */
+  storeCapsule: (capsule: Capsule) => Promise<void>;
 }
 
 interface PXEInstanceEntry {
@@ -190,6 +197,10 @@ class SharedPXEServiceClass {
     const nodeInfo = await aztecNode.getNodeInfo();
     logger.info(`PXE connected to ${networkName}`, nodeInfo);
 
+    // Create a capsule storage function using the same store as PXE
+    // This mirrors how CapsuleDataProvider.storeCapsule works internally
+    const storeCapsuleToStore = createCapsuleStoreFn(pxeStore);
+
     const instance: SharedPXEInstance = {
       pxe,
       aztecNode,
@@ -197,6 +208,13 @@ class SharedPXEServiceClass {
       storageService,
       getSponsoredFeePaymentMethod: () =>
         this.getSponsoredFeePaymentMethod(key, pxe),
+      storeCapsule: async (capsule: Capsule) => {
+        await storeCapsuleToStore(
+          capsule.contractAddress,
+          capsule.storageSlot,
+          capsule.data
+        );
+      },
     };
 
     this.instances.set(key, {
@@ -310,6 +328,28 @@ class SharedPXEServiceClass {
       logger.error('Error registering saved senders:', error);
     }
   }
+}
+
+/**
+ * Creates a function that stores capsules to the PXE's KV store.
+ * This mirrors how CapsuleDataProvider.storeCapsule works internally,
+ * using the same 'capsules' map and key format.
+ */
+function createCapsuleStoreFn(store: AztecAsyncKVStore) {
+  // Open the same 'capsules' map that PXE's CapsuleDataProvider uses
+  const capsulesMap = store.openMap<string, Buffer>('capsules');
+
+  return async (
+    contractAddress: AztecAddress,
+    slot: Fr,
+    data: Fr[]
+  ): Promise<void> => {
+    // Use the same key format as CapsuleDataProvider
+    const key = `${contractAddress.toString()}:${slot.toString()}`;
+    // Serialize data as concatenated Fr buffers (same as CapsuleDataProvider)
+    const buffer = Buffer.concat(data.map((value) => value.toBuffer()));
+    await capsulesMap.set(key, buffer);
+  };
 }
 
 // Export singleton instance

@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { SponsoredFeePaymentMethod } from '@aztec/aztec.js/fee';
 import type { PXE } from '@aztec/pxe/server';
+import type { Capsule } from '@aztec/stdlib/tx';
 import {
   SharedPXEService,
   type SharedPXEInstance,
@@ -27,6 +28,8 @@ export interface SharedPXEServices {
   wallet: MinimalWallet | null;
   storageService: AztecStorageService | null;
   getSponsoredFeePaymentMethod: () => Promise<SponsoredFeePaymentMethod>;
+  /** Store a capsule to PXE's persistent storage for contract oracle access */
+  storeCapsule: (capsule: Capsule) => Promise<void>;
 }
 
 export interface SharedPXEActions {
@@ -141,6 +144,13 @@ export const useSharedPXE = (
       return instance.getSponsoredFeePaymentMethod();
     }, [instance]);
 
+  const storeCapsule = useCallback(async (capsule: Capsule): Promise<void> => {
+    if (!instance) {
+      throw new Error('PXE not initialized');
+    }
+    return instance.storeCapsule(capsule);
+  }, [instance]);
+
   return {
     state: {
       isInitialized,
@@ -152,6 +162,7 @@ export const useSharedPXE = (
       wallet: instance?.wallet ?? null,
       storageService: instance?.storageService ?? null,
       getSponsoredFeePaymentMethod,
+      storeCapsule,
     },
     actions: {
       initialize,

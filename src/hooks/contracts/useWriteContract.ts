@@ -5,14 +5,17 @@ import { Contract, type ContractBase } from '@aztec/aztec.js/contracts';
 import {
   isBrowserWalletConnector,
   hasAppManagedPXE,
+  isExternalSignerConnector,
 } from '../../types/walletConnector';
 import { waitForBrowserWalletReceipt } from '../../utils/txReceipt';
+import { buildFunctionCallInput } from '../../utils/eip712-helpers';
 import { useUniversalWallet } from '../context/useUniversalWallet';
 import type {
   MethodsOf,
   ArgsOf,
   WriteContractResult,
 } from '../../types/contractTypes';
+import type { Eip712AuthWitnessProvider } from '../../accounts/Eip712AuthWitnessProvider';
 
 interface UseWriteContractOptions {
   /** Timeout for transaction confirmation (ms) - used by embedded wallet */
@@ -72,7 +75,7 @@ const getChainFromCaipAccount = (caipAccount: string): string => {
  */
 export const useWriteContract = (options: UseWriteContractOptions = {}) => {
   const { timeout = 900, receiptPolling } = options;
-  const { connector, account } = useUniversalWallet();
+  const { connector, account, authWitnessProvider } = useUniversalWallet();
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -176,46 +179,85 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
 
           const tx = method(...(args as unknown[]));
 
-          // Simulate first to catch revert reasons before sending
-          console.log(
-            `[useWriteContract] Simulating ${String(functionName)}...`
-          );
-          try {
-            const simulateResult = await (
-              tx as { simulate: (opts: unknown) => Promise<unknown> }
-            ).simulate({ from: account.getAddress() });
-            console.log(
-              `[useWriteContract] Simulation successful:`,
-              simulateResult
-            );
-          } catch (simErr) {
-            const simErrorMsg =
-              simErr instanceof Error ? simErr.message : 'Simulation failed';
-            console.error(
-              `[useWriteContract] Simulation failed for ${String(functionName)}:`,
-              simErr
-            );
-            setError(simErrorMsg);
-            return { success: false, error: `Simulation failed: ${simErrorMsg}` };
+          // Set EIP-712 context for External Signer wallets
+          const eip712Provider = authWitnessProvider as Eip712AuthWitnessProvider | null;
+          const isEip712 = isExternalSignerConnector(connector) && eip712Provider?.setPendingTxContext;
+
+          if (isEip712) {
+            try {
+              // Build EIP-712 context from function call
+              const callInput = buildFunctionCallInput(
+                contractAddress,
+                artifact,
+                String(functionName),
+                args as unknown[]
+              );
+
+              // Get tx nonce (use 0 for now, will be updated by kernel)
+              const txNonce = 0n;
+
+              console.log('[useWriteContract] Setting EIP-712 context:', {
+                function: callInput.functionSignature,
+                args: callInput.args.map(String),
+              });
+
+              eip712Provider.setPendingTxContext({
+                calls: [callInput],
+                txNonce,
+              });
+            } catch (contextErr) {
+              console.warn('[useWriteContract] Failed to set EIP-712 context:', contextErr);
+              // Continue without EIP-712 - will fall back to personal_sign
+            }
           }
 
-          const sentTx = (
-            tx as {
-              send: (opts: unknown) => {
-                wait: (opts: unknown) => Promise<unknown>;
-              };
+          try {
+            // Simulate first to catch revert reasons before sending
+            console.log(
+              `[useWriteContract] Simulating ${String(functionName)}...`
+            );
+            try {
+              const simulateResult = await (
+                tx as { simulate: (opts: unknown) => Promise<unknown> }
+              ).simulate({ from: account.getAddress() });
+              console.log(
+                `[useWriteContract] Simulation successful:`,
+                simulateResult
+              );
+            } catch (simErr) {
+              const simErrorMsg =
+                simErr instanceof Error ? simErr.message : 'Simulation failed';
+              console.error(
+                `[useWriteContract] Simulation failed for ${String(functionName)}:`,
+                simErr
+              );
+              setError(simErrorMsg);
+              return { success: false, error: `Simulation failed: ${simErrorMsg}` };
             }
-          ).send({
-            from: account.getAddress(),
-            fee: { paymentMethod },
-          });
 
-          const result = await sentTx.wait({ timeout });
+            const sentTx = (
+              tx as {
+                send: (opts: unknown) => {
+                  wait: (opts: unknown) => Promise<unknown>;
+                };
+              }
+            ).send({
+              from: account.getAddress(),
+              fee: { paymentMethod },
+            });
 
-          return {
-            success: true,
-            data: result,
-          };
+            const result = await sentTx.wait({ timeout });
+
+            return {
+              success: true,
+              data: result,
+            };
+          } finally {
+            // Always clear EIP-712 context
+            if (isEip712 && eip712Provider?.clearPendingTxContext) {
+              eip712Provider.clearPendingTxContext();
+            }
+          }
         }
 
         const errorMsg = 'Unknown wallet type';
@@ -229,7 +271,7 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
         setIsPending(false);
       }
     },
-    [connector, account, timeout]
+    [connector, account, timeout, authWitnessProvider]
   );
 
   const reset = useCallback(() => {

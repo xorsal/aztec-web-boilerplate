@@ -13,7 +13,9 @@ import { Fr } from '@aztec/aztec.js/fields';
 import { AccountManager } from '@aztec/aztec.js/wallet';
 import { poseidon2Hash } from '@aztec/foundation/crypto/poseidon';
 import type { PXE } from '@aztec/pxe/server';
-import { EcdsaKEthSignerAccountContract } from '../../accounts/EcdsaKEthSignerAccountContract';
+import { Eip712AccountContract } from '../../accounts/Eip712AccountContract';
+import type { Eip712AuthWitnessProvider } from '../../accounts/Eip712AuthWitnessProvider';
+import type { EVMSigner } from '../../signers/EVMSigner';
 import { ExternalSignerType } from '../../types/aztec';
 import { useError } from '../ErrorProvider';
 import { useSharedPXE, type UseSharedPXEReturn } from './useSharedPXE';
@@ -39,6 +41,8 @@ export interface ExternalSignerWalletServices {
   pxe: PXE | null;
   wallet: MinimalWallet | null;
   getSponsoredFeePaymentMethod: () => Promise<SponsoredFeePaymentMethod>;
+  /** EIP-712 auth witness provider for setting transaction context */
+  authWitnessProvider: Eip712AuthWitnessProvider | null;
 }
 
 export interface UseExternalSignerWalletReturn {
@@ -74,6 +78,8 @@ export const useExternalSignerWallet = (
   const [connectedRdns, setConnectedRdns] = useState<string | null>(null);
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
   const [error, setError] = useState<string | null>(null);
+  const [authWitnessProvider, setAuthWitnessProvider] =
+    useState<Eip712AuthWitnessProvider | null>(null);
 
   const currentSignerRef = useRef<ExternalSigner | null>(null);
   const { addMessage } = useError();
@@ -92,28 +98,70 @@ export const useExternalSignerWallet = (
         // Step 2: Initialize shared PXE (lazy)
         const pxeInstance = await sharedPXE.actions.initialize();
 
+        // Step 2.5: Set capsule injector for EIP-712 signing (if EVMSigner)
+        const evmSigner = signer as EVMSigner;
+        if (evmSigner.setCapsuleInjector && pxeInstance.storeCapsule) {
+          evmSigner.setCapsuleInjector({
+            pushCapsule: (capsule) => pxeInstance.storeCapsule(capsule),
+          });
+          // Also set chain ID from network config
+          if (evmSigner.setChainId && config.chainId) {
+            evmSigner.setChainId(BigInt(config.chainId));
+          }
+          // Enable debug logging if localStorage flag is set
+          // To enable: localStorage.setItem('EIP712_DEBUG', 'true') in browser console
+          if (evmSigner.setDebugEip712) {
+            const debugEnabled = typeof window !== 'undefined' &&
+              localStorage.getItem('EIP712_DEBUG') === 'true';
+            evmSigner.setDebugEip712(debugEnabled);
+          }
+        }
+
         // Step 3: Get public key from signer (requires signature)
         const { x, y } = await signer.getPublicKey();
 
-        // Step 4: Create auth witness provider
-        const authWitnessProvider = signer.createAuthWitnessProvider(
-          {} as Parameters<typeof signer.createAuthWitnessProvider>[0]
-        );
-
-        // Step 5: Create account contract
-        const accountContract = new EcdsaKEthSignerAccountContract(
-          x,
-          y,
-          authWitnessProvider
-        );
-
-        // Step 6: Derive keys
+        // Step 4: Derive keys (need these before creating account contract)
         const secretKeyBuffer = await signer.deriveSecretKey();
         const secretKey = await poseidon2Hash([Fr.fromBuffer(secretKeyBuffer)]);
         const salt = Fr.fromBuffer(signer.deriveSalt());
 
-        // Step 7: Create AccountManager
+        // Step 5: Create AccountManager first to get the account address
+        // We need the address before creating the auth witness provider
         const wallet = pxeInstance.wallet;
+
+        // Create a temporary account contract to get the address
+        const tempAccountContract = new Eip712AccountContract(
+          x,
+          y,
+          { createAuthWit: async () => { throw new Error('temp'); } } as any
+        );
+
+        const tempAccountManager = await AccountManager.create(
+          wallet,
+          secretKey,
+          tempAccountContract,
+          salt
+        );
+
+        const accountAddress = await tempAccountManager.getCompleteAddress();
+
+        // Step 6: Now create the auth witness provider with the account address
+        const witnessProvider = signer.createAuthWitnessProvider(accountAddress);
+
+        // Save the auth witness provider if it's an Eip712AuthWitnessProvider
+        const eip712Provider = witnessProvider as Eip712AuthWitnessProvider;
+        if (eip712Provider.setPendingTxContext) {
+          setAuthWitnessProvider(eip712Provider);
+        }
+
+        // Step 7: Create the actual account contract with the provider
+        const accountContract = new Eip712AccountContract(
+          x,
+          y,
+          witnessProvider
+        );
+
+        // Step 8: Create the real AccountManager with the proper account contract
         const accountManager = await AccountManager.create(
           wallet,
           secretKey,
@@ -137,16 +185,15 @@ export const useExternalSignerWallet = (
         // Add account to wallet
         wallet.addAccount(account);
 
-        const accountAddress = accountManager.address;
         console.log(
           `✅ External Signer (${signer.type}) Aztec account created:`,
-          accountAddress.toString()
+          accountManager.address.toString()
         );
 
-        // Step 8: Deploy account if needed
+        // Step 9: Deploy account if needed
         setStatus('deploying');
         try {
-          const metadata = await wallet.getContractMetadata(accountAddress);
+          const metadata = await wallet.getContractMetadata(accountManager.address);
           if (!metadata.isContractInitialized) {
             console.log('🚀 Deploying account contract...');
             const deployMethod = await accountManager.getDeployMethod();
@@ -214,7 +261,7 @@ export const useExternalSignerWallet = (
         throw err;
       }
     },
-    [sharedPXE, addMessage]
+    [sharedPXE, addMessage, config]
   );
 
   const disconnect = useCallback(() => {
@@ -227,6 +274,7 @@ export const useExternalSignerWallet = (
     setConnectedRdns(null);
     setError(null);
     setStatus('disconnected');
+    setAuthWitnessProvider(null);
   }, []);
 
   return {
@@ -246,6 +294,7 @@ export const useExternalSignerWallet = (
       wallet: sharedPXE.services.wallet,
       getSponsoredFeePaymentMethod:
         sharedPXE.services.getSponsoredFeePaymentMethod,
+      authWitnessProvider,
     },
     sharedPXE,
     error,

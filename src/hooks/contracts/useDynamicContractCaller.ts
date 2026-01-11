@@ -5,11 +5,14 @@ import { Contract } from '@aztec/aztec.js/contracts';
 import {
   hasAppManagedPXE,
   isBrowserWalletConnector,
+  isExternalSignerConnector,
 } from '../../types/walletConnector';
 import { waitForBrowserWalletReceipt } from '../../utils/txReceipt';
+import { buildFunctionCallInput } from '../../utils/eip712-helpers';
 import { useUniversalWallet } from '../context/useUniversalWallet';
 import { getContractMethod } from './utils';
 import type { SimulateViewsOp } from '../../types';
+import type { Eip712AuthWitnessProvider } from '../../accounts/Eip712AuthWitnessProvider';
 
 interface CallParams {
   address: string;
@@ -27,7 +30,7 @@ interface CallResult {
 export const useDynamicContractCaller = (
   artifact?: ContractArtifact | null
 ) => {
-  const { connector, account } = useUniversalWallet();
+  const { connector, account, authWitnessProvider } = useUniversalWallet();
   const [isSimulating, setIsSimulating] = useState(false);
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -201,15 +204,48 @@ export const useDynamicContractCaller = (
             };
           }
 
-          const paymentMethod = await connector.getSponsoredFeePaymentMethod();
-          const tx = method(...args);
-          const sentTx = tx.send({
-            from: account.getAddress(),
-            fee: { paymentMethod },
-          });
-          const receipt = await sentTx.wait({ timeout: 900 });
+          // Set EIP-712 context for External Signer wallets
+          const eip712Provider = authWitnessProvider as Eip712AuthWitnessProvider | null;
+          const isEip712 = isExternalSignerConnector(connector) && eip712Provider?.setPendingTxContext;
 
-          return { success: true, data: receipt };
+          if (isEip712) {
+            try {
+              const callInput = buildFunctionCallInput(
+                contractAddress,
+                artifact,
+                functionName,
+                args
+              );
+
+              console.log('[useDynamicContractCaller] Setting EIP-712 context:', {
+                function: callInput.functionSignature,
+                args: callInput.args.map(String),
+              });
+
+              eip712Provider.setPendingTxContext({
+                calls: [callInput],
+                txNonce: 0n,
+              });
+            } catch (contextErr) {
+              console.warn('[useDynamicContractCaller] Failed to set EIP-712 context:', contextErr);
+            }
+          }
+
+          try {
+            const paymentMethod = await connector.getSponsoredFeePaymentMethod();
+            const tx = method(...args);
+            const sentTx = tx.send({
+              from: account.getAddress(),
+              fee: { paymentMethod },
+            });
+            const receipt = await sentTx.wait({ timeout: 900 });
+
+            return { success: true, data: receipt };
+          } finally {
+            if (isEip712 && eip712Provider?.clearPendingTxContext) {
+              eip712Provider.clearPendingTxContext();
+            }
+          }
         }
 
         return { success: false, error: 'Unsupported connector type' };
@@ -221,7 +257,7 @@ export const useDynamicContractCaller = (
         setIsExecuting(false);
       }
     },
-    [account, artifact, connector]
+    [account, artifact, connector, authWitnessProvider]
   );
 
   return {
