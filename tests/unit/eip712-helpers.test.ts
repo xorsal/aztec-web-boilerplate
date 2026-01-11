@@ -63,7 +63,9 @@ describe('EIP-712 Helpers', () => {
       expect(func).toBeDefined();
 
       const signature = buildFunctionSignature(func!);
-      expect(signature).toBe('drip_to_private(AztecAddress,u64)');
+      // AztecAddress struct is expanded to its fields (Field)
+      // This matches Aztec SDK's FunctionSignatureDecoder behavior
+      expect(signature).toBe('drip_to_private((Field),u64)');
     });
 
     it('should build correct signature for sync_private_state', () => {
@@ -89,7 +91,8 @@ describe('EIP-712 Helpers', () => {
       );
 
       expect(callInput.targetAddress).toBe(tokenAddress);
-      expect(callInput.functionSignature).toBe('drip_to_private(AztecAddress,u64)');
+      // AztecAddress struct is expanded to its fields (Field)
+      expect(callInput.functionSignature).toBe('drip_to_private((Field),u64)');
       expect(callInput.args).toHaveLength(2);
       expect(callInput.args[0]).toBe(tokenAddress);
       expect(callInput.args[1]).toBe(amount);
