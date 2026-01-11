@@ -1,11 +1,14 @@
 /**
- * E2E Test: Mint to Public Balance
+ * E2E Test: Mint to Public and Private Balance
  *
  * Tests the minting functionality for both:
  * 1. Walletless (MetaMask simulation via @wonderland/walletless)
  * 2. Embedded wallet (Create New Account)
  *
- * Completion criteria: Public balance increases after minting
+ * Completion criteria: Balance increases after minting
+ *
+ * Note: Accounts are deterministic when VITE_E2E_DETERMINISTIC_SALT is set.
+ * This allows reusing already-deployed accounts across test runs.
  */
 
 import { test, expect, ANVIL_ACCOUNTS } from './fixtures/walletless';
@@ -14,6 +17,8 @@ import { test as baseTest } from '@playwright/test';
 const MINT_AMOUNT = '1';
 const SANDBOX_CONNECTION_TIMEOUT = 120000;
 const WALLET_OPERATION_TIMEOUT = 120000;
+
+type BalanceType = 'public' | 'private';
 
 /**
  * Helper to clear browser storage before each test
@@ -57,10 +62,11 @@ async function connectToSandbox(page: import('@playwright/test').Page) {
 }
 
 /**
- * Helper to get current public balance from the UI
+ * Helper to get current balance from the UI
  */
-async function getPublicBalance(
-  page: import('@playwright/test').Page
+async function getBalance(
+  page: import('@playwright/test').Page,
+  type: BalanceType
 ): Promise<bigint> {
   // Wait for balance card to be visible
   const balanceCard = page.locator('.token-balance-card');
@@ -72,12 +78,13 @@ async function getPublicBalance(
     await expect(loadingSpinner).not.toBeVisible({ timeout: 60000 });
   }
 
-  // Get the public balance value
-  const publicBalanceItem = page.locator('.balance-item').filter({
-    has: page.locator('.balance-label:has-text("Public")'),
+  // Get the balance value for the specified type
+  const labelText = type === 'public' ? 'Public' : 'Private';
+  const balanceItem = page.locator('.balance-item').filter({
+    has: page.locator(`.balance-label:has-text("${labelText}")`),
   });
 
-  const balanceValue = publicBalanceItem.locator('.balance-value');
+  const balanceValue = balanceItem.locator('.balance-value');
   await expect(balanceValue).toBeVisible({ timeout: 10000 });
 
   const balanceText = await balanceValue.textContent();
@@ -85,41 +92,53 @@ async function getPublicBalance(
 }
 
 /**
- * Helper to wait for balance to sync after minting
+ * Helper to wait for balance to sync after minting.
+ *
+ * After a successful drip, the useDripper hook calls invalidateBalance() which
+ * triggers a React Query refetch. We watch for the "Syncing" badge to appear
+ * and disappear, then verify the balance updated.
  */
 async function waitForBalanceSync(
   page: import('@playwright/test').Page,
+  type: BalanceType,
   expectedMinimum: bigint,
-  timeout = 60000
+  timeout = 30000
 ): Promise<bigint> {
-  const startTime = Date.now();
+  const syncingBadge = page.locator('.balance-refetch-badge');
 
-  while (Date.now() - startTime < timeout) {
-    const balance = await getPublicBalance(page);
-    if (balance >= expectedMinimum) {
-      return balance;
-    }
-    // Wait a bit before checking again
-    await page.waitForTimeout(2000);
-
-    // Check if there's a refetch happening
-    const refetchBadge = page.locator('.balance-refetch-badge');
-    if (await refetchBadge.isVisible()) {
-      await expect(refetchBadge).not.toBeVisible({ timeout: 30000 });
-    }
+  // Wait for the syncing badge to appear (refetch started)
+  // It may already be visible or appear quickly after tx completes
+  try {
+    await expect(syncingBadge).toBeVisible({ timeout: 5000 });
+    console.log('Balance syncing started...');
+  } catch {
+    // Badge might have already appeared and disappeared, or refetch was instant
+    console.log('Syncing badge not seen (may have been too fast)');
   }
 
-  throw new Error(
-    `Balance did not reach expected minimum ${expectedMinimum} within ${timeout}ms`
-  );
+  // Wait for the syncing badge to disappear (refetch complete)
+  await expect(syncingBadge).not.toBeVisible({ timeout: timeout });
+  console.log('Balance sync complete');
+
+  // Now read the updated balance
+  const balance = await getBalance(page, type);
+
+  if (balance < expectedMinimum) {
+    throw new Error(
+      `${type} balance ${balance} did not reach expected minimum ${expectedMinimum}`
+    );
+  }
+
+  return balance;
 }
 
 /**
- * Helper to mint tokens to public balance
+ * Helper to mint tokens
  */
-async function mintToPublic(
+async function mintTokens(
   page: import('@playwright/test').Page,
-  amount: string
+  amount: string,
+  type: BalanceType
 ) {
   // Wait for dripper form to be visible
   const dripperContent = page.locator('.dripper-content');
@@ -137,14 +156,14 @@ async function mintToPublic(
   await expect(amountInput).toBeEnabled({ timeout: 10000 });
   await amountInput.fill(amount);
 
-  // Select public drip type
+  // Select drip type
   const dripTypeSelect = page.locator('#drip-type');
   await expect(dripTypeSelect).toBeEnabled({ timeout: 10000 });
-  await dripTypeSelect.selectOption('public');
+  await dripTypeSelect.selectOption(type);
 
-  // Find the drip button - look for button with btn-primary class containing "Drip"
+  // Find the drip button
   const dripButton = page.locator('button.btn-primary').filter({
-    hasText: /Drip to public/i,
+    hasText: new RegExp(`Drip to ${type}`, 'i'),
   });
   await expect(dripButton).toBeVisible({ timeout: 10000 });
   await expect(dripButton).toBeEnabled({ timeout: 30000 });
@@ -157,8 +176,7 @@ async function mintToPublic(
   await dripButton.click();
   console.log('Drip button clicked');
 
-  // Wait for transaction to process - button text changes to "Processing..."
-  // Use a polling approach since the state change might be very quick
+  // Wait for transaction to process
   const startTime = Date.now();
   let sawProcessing = false;
 
@@ -176,7 +194,7 @@ async function mintToPublic(
       break;
     }
 
-    // Also check for success notification - indicates transaction completed
+    // Also check for success notification
     const successNotification = page.locator('.error-item.info');
     if (await successNotification.isVisible()) {
       const notifText = await successNotification.textContent();
@@ -190,6 +208,10 @@ async function mintToPublic(
   }
 }
 
+// ============================================================================
+// MINT TO PUBLIC TESTS
+// ============================================================================
+
 test.describe('Mint to Public - Walletless (MetaMask)', () => {
   test.beforeEach(async ({ page }) => {
     await clearBrowserStorage(page);
@@ -202,45 +224,40 @@ test.describe('Mint to Public - Walletless (MetaMask)', () => {
     console.log('\n=== E2E: Mint to Public via Walletless ===\n');
     console.log('Test account:', walletless.account.address);
 
-    // Navigate to app
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 
-    // Connect to sandbox and open modal
     const modal = await connectToSandbox(page);
     console.log('Sandbox connected');
 
-    // Click MetaMask connect button
     const metamaskBtn = modal.locator('button:has-text("MetaMask")');
     await expect(metamaskBtn).toBeEnabled({ timeout: 10000 });
     await metamaskBtn.click();
     console.log('MetaMask button clicked, waiting for wallet connection...');
 
-    // Wait for modal to close (connection complete)
     await expect(modal).not.toBeVisible({ timeout: WALLET_OPERATION_TIMEOUT });
     console.log('Wallet connected');
 
-    // Wait for account section to be visible
     const accountSection = page.locator('.connected-account-section');
     await expect(accountSection).toBeVisible({
       timeout: WALLET_OPERATION_TIMEOUT,
     });
 
-    // Get initial public balance
-    const initialBalance = await getPublicBalance(page);
+    const initialBalance = await getBalance(page, 'public');
     console.log('Initial public balance:', initialBalance.toString());
 
-    // Mint tokens to public balance
     console.log(`Minting ${MINT_AMOUNT} tokens to public balance...`);
-    await mintToPublic(page, MINT_AMOUNT);
+    await mintTokens(page, MINT_AMOUNT, 'public');
     console.log('Mint transaction submitted');
 
-    // Wait for balance to increase
     const expectedMinBalance = initialBalance + BigInt(MINT_AMOUNT);
-    const finalBalance = await waitForBalanceSync(page, expectedMinBalance);
+    const finalBalance = await waitForBalanceSync(
+      page,
+      'public',
+      expectedMinBalance
+    );
     console.log('Final public balance:', finalBalance.toString());
 
-    // Assert balance increased
     expect(finalBalance).toBeGreaterThanOrEqual(expectedMinBalance);
     console.log(
       `Balance increased by ${(finalBalance - initialBalance).toString()} tokens`
@@ -250,7 +267,6 @@ test.describe('Mint to Public - Walletless (MetaMask)', () => {
   });
 });
 
-// Use base test (without walletless fixture) for embedded wallet test
 baseTest.describe('Mint to Public - Embedded Wallet (Create New Account)', () => {
   baseTest.beforeEach(async ({ page }) => {
     await clearBrowserStorage(page);
@@ -261,47 +277,44 @@ baseTest.describe('Mint to Public - Embedded Wallet (Create New Account)', () =>
     async ({ page }) => {
       console.log('\n=== E2E: Mint to Public via Embedded Wallet ===\n');
 
-      // Navigate to app
       await page.goto('/');
       await page.waitForLoadState('networkidle');
 
-      // Connect to sandbox and open modal
       const modal = await connectToSandbox(page);
       console.log('Sandbox connected');
 
-      // Click "Create New Account" button
       const createAccountBtn = modal.locator(
         'button:has-text("Create New Account")'
       );
       await expect(createAccountBtn).toBeEnabled({ timeout: 10000 });
       await createAccountBtn.click();
-      console.log('Create New Account clicked, waiting for account creation...');
+      console.log(
+        'Create New Account clicked, waiting for account creation...'
+      );
 
-      // Wait for modal to close (account creation complete)
       await expect(modal).not.toBeVisible({ timeout: WALLET_OPERATION_TIMEOUT });
       console.log('Account created and connected');
 
-      // Wait for account section to be visible
       const accountSection = page.locator('.connected-account-section');
       await expect(accountSection).toBeVisible({
         timeout: WALLET_OPERATION_TIMEOUT,
       });
 
-      // Get initial public balance (should be 0 for new account)
-      const initialBalance = await getPublicBalance(page);
+      const initialBalance = await getBalance(page, 'public');
       console.log('Initial public balance:', initialBalance.toString());
 
-      // Mint tokens to public balance
       console.log(`Minting ${MINT_AMOUNT} tokens to public balance...`);
-      await mintToPublic(page, MINT_AMOUNT);
+      await mintTokens(page, MINT_AMOUNT, 'public');
       console.log('Mint transaction submitted');
 
-      // Wait for balance to increase
       const expectedMinBalance = initialBalance + BigInt(MINT_AMOUNT);
-      const finalBalance = await waitForBalanceSync(page, expectedMinBalance);
+      const finalBalance = await waitForBalanceSync(
+        page,
+        'public',
+        expectedMinBalance
+      );
       console.log('Final public balance:', finalBalance.toString());
 
-      // Assert balance increased
       expect(finalBalance).toBeGreaterThanOrEqual(expectedMinBalance);
       console.log(
         `Balance increased by ${(finalBalance - initialBalance).toString()} tokens`
@@ -311,3 +324,125 @@ baseTest.describe('Mint to Public - Embedded Wallet (Create New Account)', () =>
     }
   );
 });
+
+// ============================================================================
+// MINT TO PRIVATE TESTS
+// ============================================================================
+
+test.describe('Mint to Private - Walletless (MetaMask)', () => {
+  test.beforeEach(async ({ page }) => {
+    await clearBrowserStorage(page);
+  });
+
+  test('should mint tokens to private balance via walletless MetaMask', async ({
+    page,
+    walletless,
+  }) => {
+    console.log('\n=== E2E: Mint to Private via Walletless ===\n');
+    console.log('Test account:', walletless.account.address);
+
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    const modal = await connectToSandbox(page);
+    console.log('Sandbox connected');
+
+    const metamaskBtn = modal.locator('button:has-text("MetaMask")');
+    await expect(metamaskBtn).toBeEnabled({ timeout: 10000 });
+    await metamaskBtn.click();
+    console.log('MetaMask button clicked, waiting for wallet connection...');
+
+    await expect(modal).not.toBeVisible({ timeout: WALLET_OPERATION_TIMEOUT });
+    console.log('Wallet connected');
+
+    const accountSection = page.locator('.connected-account-section');
+    await expect(accountSection).toBeVisible({
+      timeout: WALLET_OPERATION_TIMEOUT,
+    });
+
+    const initialBalance = await getBalance(page, 'private');
+    console.log('Initial private balance:', initialBalance.toString());
+
+    console.log(`Minting ${MINT_AMOUNT} tokens to private balance...`);
+    await mintTokens(page, MINT_AMOUNT, 'private');
+    console.log('Mint transaction submitted');
+
+    const expectedMinBalance = initialBalance + BigInt(MINT_AMOUNT);
+    const finalBalance = await waitForBalanceSync(
+      page,
+      'private',
+      expectedMinBalance
+    );
+    console.log('Final private balance:', finalBalance.toString());
+
+    expect(finalBalance).toBeGreaterThanOrEqual(expectedMinBalance);
+    console.log(
+      `Balance increased by ${(finalBalance - initialBalance).toString()} tokens`
+    );
+
+    console.log('\n=== TEST PASSED ===\n');
+  });
+});
+
+baseTest.describe(
+  'Mint to Private - Embedded Wallet (Create New Account)',
+  () => {
+    baseTest.beforeEach(async ({ page }) => {
+      await clearBrowserStorage(page);
+    });
+
+    baseTest(
+      'should mint tokens to private balance via embedded wallet',
+      async ({ page }) => {
+        console.log('\n=== E2E: Mint to Private via Embedded Wallet ===\n');
+
+        await page.goto('/');
+        await page.waitForLoadState('networkidle');
+
+        const modal = await connectToSandbox(page);
+        console.log('Sandbox connected');
+
+        const createAccountBtn = modal.locator(
+          'button:has-text("Create New Account")'
+        );
+        await expect(createAccountBtn).toBeEnabled({ timeout: 10000 });
+        await createAccountBtn.click();
+        console.log(
+          'Create New Account clicked, waiting for account creation...'
+        );
+
+        await expect(modal).not.toBeVisible({
+          timeout: WALLET_OPERATION_TIMEOUT,
+        });
+        console.log('Account created and connected');
+
+        const accountSection = page.locator('.connected-account-section');
+        await expect(accountSection).toBeVisible({
+          timeout: WALLET_OPERATION_TIMEOUT,
+        });
+
+        const initialBalance = await getBalance(page, 'private');
+        console.log('Initial private balance:', initialBalance.toString());
+
+        console.log(`Minting ${MINT_AMOUNT} tokens to private balance...`);
+        await mintTokens(page, MINT_AMOUNT, 'private');
+        console.log('Mint transaction submitted');
+
+        const expectedMinBalance = initialBalance + BigInt(MINT_AMOUNT);
+        const finalBalance = await waitForBalanceSync(
+          page,
+          'private',
+          expectedMinBalance
+        );
+        console.log('Final private balance:', finalBalance.toString());
+
+        expect(finalBalance).toBeGreaterThanOrEqual(expectedMinBalance);
+        console.log(
+          `Balance increased by ${(finalBalance - initialBalance).toString()} tokens`
+        );
+
+        console.log('\n=== TEST PASSED ===\n');
+      }
+    );
+  }
+);

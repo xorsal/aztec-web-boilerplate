@@ -166,16 +166,25 @@ export const useExternalSignerWallet = (
             console.log('ℹ️ Account already deployed');
           }
         } catch (deployErr) {
-          console.error('❌ Account deployment failed:', deployErr);
-          addMessage({
-            message: 'Account deployment failed',
-            type: 'warning',
-            source: 'wallet',
-            details:
-              deployErr instanceof Error
-                ? deployErr.message
-                : String(deployErr),
-          });
+          const errMsg =
+            deployErr instanceof Error ? deployErr.message : String(deployErr);
+          // Check if this is an "Existing nullifier" error - means account is already deployed
+          if (
+            errMsg.includes('Existing nullifier') ||
+            errMsg.includes('already deployed')
+          ) {
+            console.log(
+              'ℹ️ Account already deployed (deterministic salt reuse)'
+            );
+          } else {
+            console.error('❌ Account deployment failed:', deployErr);
+            addMessage({
+              message: 'Account deployment failed',
+              type: 'warning',
+              source: 'wallet',
+              details: errMsg,
+            });
+          }
         }
 
         // Update state

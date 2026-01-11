@@ -66,6 +66,13 @@ interface UseEmbeddedWalletOptions {
 
 const STORAGE_KEY = 'aztec-embedded-account';
 
+/**
+ * Deterministic salt for E2E testing.
+ * When this env var is set, accounts will be created with a predictable address.
+ * This allows tests to reuse already-deployed accounts.
+ */
+const E2E_DETERMINISTIC_SALT = import.meta.env.VITE_E2E_DETERMINISTIC_SALT;
+
 interface StoredAccountData {
   address: string;
   signingKey: string;
@@ -175,9 +182,18 @@ export const useEmbeddedWallet = (
       const wallet = pxeInstance.wallet;
 
       // Generate new credentials
-      const salt = Fr.fromBuffer(randomBytes(32));
-      const secretKey = await poseidon2Hash([Fr.fromBuffer(randomBytes(32))]);
+      // Use deterministic salt for E2E testing if configured
+      const salt = E2E_DETERMINISTIC_SALT
+        ? Fr.fromString(E2E_DETERMINISTIC_SALT)
+        : Fr.fromBuffer(randomBytes(32));
+      const secretKey = E2E_DETERMINISTIC_SALT
+        ? await poseidon2Hash([Fr.fromString(E2E_DETERMINISTIC_SALT)])
+        : await poseidon2Hash([Fr.fromBuffer(randomBytes(32))]);
       const signingKey = Buffer.from(secretKey.toBuffer().subarray(0, 32));
+
+      if (E2E_DETERMINISTIC_SALT) {
+        console.log('🧪 Using deterministic salt for E2E testing');
+      }
 
       const accountContract = new EcdsaRAccountContract(signingKey);
       const accountManager = await AccountManager.create(
@@ -228,14 +244,25 @@ export const useEmbeddedWallet = (
           console.log('✅ Account deployed successfully');
         }
       } catch (deployErr) {
-        console.error('❌ Account deployment failed:', deployErr);
-        addMessage({
-          message: 'Account deployment failed',
-          type: 'warning',
-          source: 'wallet',
-          details:
-            deployErr instanceof Error ? deployErr.message : String(deployErr),
-        });
+        const errMsg =
+          deployErr instanceof Error ? deployErr.message : String(deployErr);
+        // Check if this is an "Existing nullifier" error - means account is already deployed
+        if (
+          errMsg.includes('Existing nullifier') ||
+          errMsg.includes('already deployed')
+        ) {
+          console.log(
+            'ℹ️ Account already deployed (deterministic salt reuse)'
+          );
+        } else {
+          console.error('❌ Account deployment failed:', deployErr);
+          addMessage({
+            message: 'Account deployment failed',
+            type: 'warning',
+            source: 'wallet',
+            details: errMsg,
+          });
+        }
       }
 
       // Save account credentials
