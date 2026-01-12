@@ -147,6 +147,14 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
   }
 
   /**
+   * Get the cached capsule from the last createAuthWit call.
+   * Used by the entrypoint to include the capsule in the TxExecutionRequest.
+   */
+  getCachedCapsule(): Capsule | null {
+    return this.cachedSignature?.capsule ?? null;
+  }
+
+  /**
    * Create an auth witness for the given message hash.
    *
    * If pending tx context exists:
@@ -293,18 +301,27 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
 
   /**
    * Build EIP-712 typed data for MetaMask signing.
+   *
+   * IMPORTANT: For public functions, the args in the typed data must include
+   * the selector (prepended) to match what goes into the capsule. The Noir
+   * contract reconstructs the hash from capsule data, so they must match.
    */
   private buildTypedData(calls: FunctionCallInput[], txNonce: bigint) {
     const encoder = new Eip712Encoder({ chainId: this.chainId });
 
     // Convert FunctionCallInput to FunctionCall format
-    const functionCalls = calls.map((call) =>
-      Eip712Encoder.createFunctionCall(
+    // For public functions, prepend the selector to args to match capsule data
+    const functionCalls = calls.map((call) => {
+      const argsForTypedData = call.isPublic && call.selector !== undefined
+        ? [call.selector, ...call.args]
+        : call.args;
+
+      return Eip712Encoder.createFunctionCall(
         call.targetAddress,
         call.functionSignature,
-        call.args
-      )
-    );
+        argsForTypedData
+      );
+    });
 
     // Build typed data
     return encoder.buildEntrypointTypedData5(
@@ -335,9 +352,15 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     // Function calls
     console.log('\n📝 Function Calls:');
     context.calls.forEach((call, index) => {
-      console.log(`\n   [${index + 1}] ${call.functionSignature}`);
+      const argsForDisplay = call.isPublic && call.selector !== undefined
+        ? [call.selector, ...call.args]
+        : call.args;
+      console.log(`\n   [${index + 1}] ${call.functionSignature}${call.isPublic ? ' (public)' : ''}`);
       console.log(`       Target: 0x${call.targetAddress.toString(16).padStart(64, '0').slice(0, 16)}...`);
-      console.log(`       Args: [${call.args.map(a => a.toString()).join(', ')}]`);
+      console.log(`       Args: [${argsForDisplay.map(a => a.toString()).join(', ')}]`);
+      if (call.isPublic && call.selector !== undefined) {
+        console.log(`       (includes selector: ${call.selector})`);
+      }
     });
 
     // Transaction nonce

@@ -17,7 +17,7 @@ import type { AztecAddress } from '@aztec/aztec.js/addresses';
 import { Fr } from '@aztec/aztec.js/fields';
 import type { EntrypointInterface } from '@aztec/entrypoints/interfaces';
 import type { AccountFeePaymentMethodOptions } from '@aztec/entrypoints/account';
-import { FunctionSelector, encodeArguments } from '@aztec/stdlib/abi';
+import { FunctionSelector, FunctionType, encodeArguments } from '@aztec/stdlib/abi';
 import type { GasSettings } from '@aztec/stdlib/gas';
 import { HashedValues, TxContext, TxExecutionRequest, type ExecutionPayload } from '@aztec/stdlib/tx';
 import type { Eip712AuthWitnessProvider } from './Eip712AuthWitnessProvider';
@@ -75,22 +75,33 @@ class EncodedAppEntrypointCalls {
     return this.encodedFunctionCalls;
   }
 
-  static async create(calls: { to: AztecAddress; selector: FunctionSelector; args: Fr[]; isStatic: boolean }[], txNonce?: Fr) {
+  static async create(calls: { to: AztecAddress; selector: FunctionSelector; args: Fr[]; isStatic: boolean; type?: string }[], txNonce?: Fr) {
     const nonce = txNonce ?? Fr.random();
     const hashedArguments: HashedValues[] = [];
     const encodedFunctionCalls: EncodedFunctionCall[] = [];
 
     // Process actual calls
     for (const call of calls) {
-      const argsHash = await HashedValues.fromArgs(call.args);
-      hashedArguments.push(argsHash);
+      const isPublic = call.type === FunctionType.PUBLIC;
+
+      // For public functions, use fromCalldata (includes selector, PUBLIC_CALLDATA separator)
+      // For private functions, use fromArgs (just args, FUNCTION_ARGS separator)
+      //
+      // Note: EIP-712 is only used for private functions (constrained).
+      // Public functions use the standard entrypoint with personal_sign.
+      const argsHashedValues = isPublic
+        ? await HashedValues.fromCalldata([call.selector.toField(), ...call.args])
+        : await HashedValues.fromArgs(call.args);
+
+      hashedArguments.push(argsHashedValues);
+
       // All field values must be bigint for encodeArguments
       // NOTE: function_selector uses .value (not .inner) to match SDK's Selector class
       encodedFunctionCalls.push({
-        args_hash: argsHash.hash.toBigInt(),                        // bigint
+        args_hash: argsHashedValues.hash.toBigInt(),
         function_selector: { value: Number(call.selector.toField().toBigInt()) },  // u32 - .value for SDK encoder
         target_address: { inner: call.to.toField().toBigInt() },    // bigint
-        is_public: false,
+        is_public: isPublic,
         hide_msg_sender: false,
         is_static: call.isStatic,
       });
@@ -261,6 +272,7 @@ export class Eip712AccountEntrypoint implements EntrypointInterface {
         selector: call.selector,
         args: call.args,
         isStatic: call.isStatic ?? false,
+        type: call.type,  // CRITICAL: Pass function type for public/private distinction
       })),
       effectiveTxNonce
     );
@@ -277,6 +289,21 @@ export class Eip712AccountEntrypoint implements EntrypointInterface {
     // For fallback: returns 64-field AuthWitness (personal_sign signature)
     const appPayloadAuthwitness = await this.auth.createAuthWit(await encodedCalls.hash());
 
+    // For EIP-712 entrypoint, get the capsule from the auth provider and include it
+    // in the tx request. The capsule contains the signature and function call data.
+    let allCapsules = [...capsules];
+    if (useEip712Entrypoint && typeof eip712Provider.getCachedCapsule === 'function') {
+      const eip712Capsule = eip712Provider.getCachedCapsule();
+      if (eip712Capsule) {
+        console.log('[Eip712AccountEntrypoint] Adding EIP-712 capsule to tx request:', {
+          capsuleDataLength: eip712Capsule.data.length,
+        });
+        allCapsules.push(eip712Capsule);
+      } else {
+        console.warn('[Eip712AccountEntrypoint] EIP-712 entrypoint selected but no capsule available!');
+      }
+    }
+
     // Assemble the tx request
     const txRequest = TxExecutionRequest.from({
       firstCallArgsHash: entrypointHashedArgs.hash,
@@ -285,7 +312,7 @@ export class Eip712AccountEntrypoint implements EntrypointInterface {
       txContext: new TxContext(this.chainId, this.version, gasSettings),
       argsOfCalls: [...encodedCalls.hashedArguments, entrypointHashedArgs, ...extraHashedArgs],
       authWitnesses: [...authWitnesses, appPayloadAuthwitness],
-      capsules, // Capsules are injected by the Eip712AuthWitnessProvider
+      capsules: allCapsules, // Include EIP-712 capsule if available
       salt: Fr.random(),
     });
 

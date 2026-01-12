@@ -1,0 +1,50 @@
+diff --git a/node_modules/@aztec/pxe/dest/storage/contract_data_provider/contract_data_provider.js b/node_modules/@aztec/pxe/dest/storage/contract_data_provider/contract_data_provider.js
+index 1234567..abcdefg 100644
+--- a/node_modules/@aztec/pxe/dest/storage/contract_data_provider/contract_data_provider.js
++++ b/node_modules/@aztec/pxe/dest/storage/contract_data_provider/contract_data_provider.js
+@@ -167,7 +167,12 @@ class ContractDataProvider {
+         return `${artifact?.name ?? contractAddress}:${fnArtifact?.name ?? selector}`;
+     }
+     async #findFunctionArtifactBySelector(artifact, selector) {
+-        const functions = artifact.functions;
++        // Search both functions and nonDispatchPublicFunctions
++        // This is a fix for the Aztec SDK limitation where unconstrained public functions
++        // are stored in nonDispatchPublicFunctions but getFunctionArtifact only searched
++        // artifact.functions, causing "Function artifact not found" errors.
++        // Note: Public functions in nonDispatchPublicFunctions don't have bytecode,
++        // but that's OK since they're executed by the sequencer via public_dispatch.
++        const functions = [...artifact.functions, ...(artifact.nonDispatchPublicFunctions ?? [])];
+         for(let i = 0; i < functions.length; i++){
+             const fn = functions[i];
+             const fnSelector = await FunctionSelector.fromNameAndParameters(fn.name, fn.parameters);
+
+diff --git a/node_modules/@aztec/pxe/dest/contract_function_simulator/proxied_contract_data_source.js b/node_modules/@aztec/pxe/dest/contract_function_simulator/proxied_contract_data_source.js
+index 2345678..bcdefgh 100644
+--- a/node_modules/@aztec/pxe/dest/contract_function_simulator/proxied_contract_data_source.js
++++ b/node_modules/@aztec/pxe/dest/contract_function_simulator/proxied_contract_data_source.js
+@@ -34,7 +34,8 @@ export class ProxiedContractDataProviderFactory {
+                             return async (contractAddress, selector)=>{
+                                 if (overrides[contractAddress.toString()]) {
+                                     const { artifact } = overrides[contractAddress.toString()];
+-                                    const functions = artifact.functions;
++                                    // Search both functions and nonDispatchPublicFunctions (patch for Aztec SDK bug)
++                                    const functions = [...artifact.functions, ...(artifact.nonDispatchPublicFunctions ?? [])];
+                                     for(let i = 0; i < functions.length; i++){
+                                         const fn = functions[i];
+                                         const fnSelector = await FunctionSelector.fromNameAndParameters(fn.name, fn.parameters);
+
+diff --git a/node_modules/@aztec/pxe/dest/error_enriching.js b/node_modules/@aztec/pxe/dest/error_enriching.js
+index 3456789..cdefghi 100644
+--- a/node_modules/@aztec/pxe/dest/error_enriching.js
++++ b/node_modules/@aztec/pxe/dest/error_enriching.js
+@@ -29,7 +29,9 @@ export async function enrichSimulationError(err, contractDataProvider, logger) {
+         if (contract) {
+             err.enrichWithContractName(parsedContractAddress, contract.name);
+             const selectorToNameMap = new Map();
+-            await Promise.all(contract.functions.map(async (fn)=>{
++            // Search both functions and nonDispatchPublicFunctions (patch for Aztec SDK bug)
++            const allFunctions = [...contract.functions, ...(contract.nonDispatchPublicFunctions ?? [])];
++            await Promise.all(allFunctions.map(async (fn)=>{
+                 const selector = await FunctionSelector.fromNameAndParameters(fn);
+                 selectorToNameMap.set(selector.toString(), fn.name);
+             }));

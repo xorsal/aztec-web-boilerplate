@@ -6,6 +6,7 @@
 
 import type { ContractArtifact, FunctionArtifact, ABIParameter, AbiType } from '@aztec/aztec.js/abi';
 import type { AztecAddress } from '@aztec/aztec.js/addresses';
+import { FunctionSelector } from '@aztec/stdlib/abi';
 import type { FunctionCallInput } from '../lib/eip712';
 
 /**
@@ -65,8 +66,63 @@ export function buildFunctionSignature(func: FunctionArtifact): string {
   return `${func.name}(${params})`;
 }
 
+// Cache for raw JSON artifacts - these contain all functions including unconstrained ones
+const rawArtifactCache = new Map<string, any>();
+
+/**
+ * Register a raw JSON artifact for function signature lookup.
+ * Call this when loading a contract to enable EIP-712 clear signing for all functions.
+ *
+ * @param contractName - Unique name for the contract
+ * @param rawJson - The raw JSON artifact before loadContractArtifact processing
+ */
+export function registerRawArtifact(contractName: string, rawJson: any): void {
+  rawArtifactCache.set(contractName, rawJson);
+}
+
+/**
+ * Check if a function is a constrained (private) function.
+ * Only constrained functions should have EIP-712 context set, because unconstrained
+ * public functions are dispatched differently by the SDK.
+ *
+ * Note: We check the raw artifact cache because the processed artifact's function
+ * objects don't have an is_unconstrained property (it's lost during loadContractArtifact).
+ *
+ * @param artifact - The contract artifact
+ * @param methodName - The method name to check
+ * @returns true if the function is constrained (private), false if unconstrained (public)
+ */
+export function isConstrainedFunction(
+  artifact: ContractArtifact,
+  methodName: string
+): boolean {
+  // Check raw artifacts for the is_unconstrained property
+  for (const rawArtifact of rawArtifactCache.values()) {
+    if (rawArtifact?.functions) {
+      const rawFunc = rawArtifact.functions.find((f: any) => f.name === methodName);
+      if (rawFunc) {
+        // is_unconstrained: true means it's a public/unconstrained function
+        return rawFunc.is_unconstrained !== true;
+      }
+    }
+  }
+
+  // If not found in raw artifacts, check the processed artifact
+  // and assume it's constrained if found
+  const found = artifact.functions.find((f) => f.name === methodName);
+  if (found) {
+    return true;
+  }
+
+  // Function not found anywhere - assume not constrained to be safe
+  return false;
+}
+
 /**
  * Find a function artifact by name from a contract artifact.
+ *
+ * Note: loadContractArtifact may filter out some functions (like unconstrained public functions).
+ * We check both the processed artifact and raw JSON artifacts for the full function list.
  *
  * @param artifact - The contract artifact
  * @param methodName - The method name to find
@@ -76,7 +132,32 @@ export function findFunctionArtifact(
   artifact: ContractArtifact,
   methodName: string
 ): FunctionArtifact | undefined {
-  return artifact.functions.find((f) => f.name === methodName);
+  // First try the processed functions array
+  const found = artifact.functions.find((f) => f.name === methodName);
+  if (found) return found;
+
+  // If not found, search all raw artifacts
+  // This handles unconstrained public functions that are filtered out by loadContractArtifact
+  for (const rawArtifact of rawArtifactCache.values()) {
+    if (rawArtifact?.functions) {
+      const rawFunc = rawArtifact.functions.find((f: any) => f.name === methodName);
+      if (rawFunc && rawFunc.abi?.parameters) {
+        // Convert raw function to FunctionArtifact format
+        return {
+          name: rawFunc.name,
+          parameters: rawFunc.abi.parameters,
+          returnTypes: rawFunc.abi.return_type ? [rawFunc.abi.return_type] : [],
+          isInitializer: rawFunc.custom_attributes?.includes('abi_initializer') ?? false,
+          isInternal: rawFunc.custom_attributes?.includes('abi_internal') ?? false,
+          bytecode: rawFunc.bytecode,
+          debugSymbols: rawFunc.debug_symbols,
+          errorTypes: rawFunc.abi.error_types ?? {},
+        } as unknown as FunctionArtifact;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -135,12 +216,12 @@ export function argsToFields(args: unknown[]): bigint[] {
  * @param args - The method arguments
  * @returns FunctionCallInput for EIP-712 context
  */
-export function buildFunctionCallInput(
+export async function buildFunctionCallInput(
   targetAddress: AztecAddress | bigint | string,
   artifact: ContractArtifact,
   methodName: string,
   args: unknown[]
-): FunctionCallInput {
+): Promise<FunctionCallInput> {
   // Find the function in the artifact
   const func = findFunctionArtifact(artifact, methodName);
   if (!func) {
@@ -149,6 +230,18 @@ export function buildFunctionCallInput(
 
   // Build the function signature
   const functionSignature = buildFunctionSignature(func);
+
+  // Check if this is a public (unconstrained) function
+  // For public functions, the args_hash in AppPayload includes the selector
+  const isConstrained = isConstrainedFunction(artifact, methodName);
+  const isPublic = !isConstrained;
+
+  // Compute the function selector if it's a public function
+  let selector: bigint | undefined;
+  if (isPublic) {
+    const funcSelector = await FunctionSelector.fromNameAndParameters(func.name, func.parameters);
+    selector = funcSelector.toField().toBigInt();
+  }
 
   // Convert address to bigint
   // IMPORTANT: For AztecAddress, we must use toField().toBigInt() to get the
@@ -184,6 +277,8 @@ export function buildFunctionCallInput(
     hasToBigInt: typeof targetAddress === 'object' && targetAddress !== null && 'toBigInt' in targetAddress,
     outputBigInt: addressBigInt.toString(),
     outputHex: '0x' + addressBigInt.toString(16).padStart(64, '0'),
+    isPublic,
+    selector: selector?.toString(),
     // If AztecAddress, show intermediate steps
     ...(typeof targetAddress === 'object' && targetAddress !== null && 'toField' in targetAddress ? {
       toFieldResult: (targetAddress as any).toField().toString(),
@@ -195,6 +290,8 @@ export function buildFunctionCallInput(
     targetAddress: addressBigInt,
     functionSignature,
     args: fieldArgs,
+    isPublic,
+    selector,
   };
 }
 
@@ -204,20 +301,22 @@ export function buildFunctionCallInput(
  * @param calls - Array of call parameters
  * @returns Array of FunctionCallInputs
  */
-export function buildFunctionCallInputs(
+export async function buildFunctionCallInputs(
   calls: Array<{
     targetAddress: AztecAddress | bigint | string;
     artifact: ContractArtifact;
     methodName: string;
     args: unknown[];
   }>
-): FunctionCallInput[] {
-  return calls.map((call) =>
-    buildFunctionCallInput(
-      call.targetAddress,
-      call.artifact,
-      call.methodName,
-      call.args
+): Promise<FunctionCallInput[]> {
+  return Promise.all(
+    calls.map((call) =>
+      buildFunctionCallInput(
+        call.targetAddress,
+        call.artifact,
+        call.methodName,
+        call.args
+      )
     )
   );
 }

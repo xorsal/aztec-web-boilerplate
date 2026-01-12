@@ -8,7 +8,7 @@
 
 use keccak256::keccak256;
 use dep::aztec::protocol_types::{
-    constants::{GENERATOR_INDEX__FUNCTION_ARGS, GENERATOR_INDEX__AUTHWIT_INNER},
+    constants::{GENERATOR_INDEX__FUNCTION_ARGS, GENERATOR_INDEX__AUTHWIT_INNER, GENERATOR_INDEX__PUBLIC_CALLDATA},
     hash::{poseidon2_hash_subarray, poseidon2_hash_with_separator},
     traits::{Deserialize, Serialize},
 };
@@ -692,13 +692,25 @@ pub fn field_to_bytes32(f: Field) -> [u8; 32] {
 
 /**
  * Compute hash_args with variable length
+ *
+ * IMPORTANT: Public and private functions use different generator indices:
+ * - Private functions: GENERATOR_INDEX__FUNCTION_ARGS (44)
+ * - Public functions: GENERATOR_INDEX__PUBLIC_CALLDATA (43)
+ *
+ * This matches the SDK's HashedValues.fromArgs() vs fromCalldata() methods.
  */
-pub fn compute_aztec_args_hash(args: [Field; MAX_SERIALIZED_ARGS], len: u32) -> Field {
+pub fn compute_aztec_args_hash(args: [Field; MAX_SERIALIZED_ARGS], len: u32, is_public: bool) -> Field {
     if len == 0 {
         0
     } else {
         let mut input: [Field; 21] = [0; 21];
-        input[0] = GENERATOR_INDEX__FUNCTION_ARGS as Field;
+        // Use appropriate generator index based on function type
+        let generator_index = if is_public {
+            GENERATOR_INDEX__PUBLIC_CALLDATA
+        } else {
+            GENERATOR_INDEX__FUNCTION_ARGS
+        };
+        input[0] = generator_index as Field;
         for i in 0..MAX_SERIALIZED_ARGS {
             input[i + 1] = args[i];
         }
@@ -794,4 +806,13 @@ pub fn extract_function_selector(serialized: [Field; APP_PAYLOAD_SERIALIZED_LEN]
 pub fn extract_target_address(serialized: [Field; APP_PAYLOAD_SERIALIZED_LEN], call_index: u32) -> Field {
     let offset = call_index * FUNCTION_CALL_SERIALIZED_LEN + 2;
     serialized[offset]
+}
+
+/**
+ * Extract is_public flag for a specific function call from serialized AppPayload
+ * FunctionCall layout: [args_hash, function_selector, target_address, is_public, hide_msg_sender, is_static]
+ */
+pub fn extract_is_public(serialized: [Field; APP_PAYLOAD_SERIALIZED_LEN], call_index: u32) -> bool {
+    let offset = call_index * FUNCTION_CALL_SERIALIZED_LEN + 3;
+    serialized[offset] == 1
 }

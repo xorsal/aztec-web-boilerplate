@@ -24,7 +24,10 @@ export {
   argToField,
   noirTypeToString,
   findFunctionArtifact,
+  registerRawArtifact,
+  isConstrainedFunction,
 } from './eip712-helpers';
+export { augmentArtifactWithPublicFunctions } from './augmentArtifact';
 
 /** CAIP account format: "namespace:chainId:address" (e.g., "aztec:1:0x123...") */
 type CaipAccountString = string;

@@ -42,7 +42,7 @@ pub contract Eip712Account {
         hash_authwit_app_domain, hash_function_call_authorization,
         compute_eip712_payload, field_to_bytes32,
         compute_aztec_args_hash, compute_function_selector, compute_inner_hash,
-        extract_args_hash, extract_function_selector, extract_target_address,
+        extract_args_hash, extract_function_selector, extract_target_address, extract_is_public,
         // Constants
         APP_PAYLOAD_SERIALIZED_LEN, ACCOUNT_MAX_CALLS, EMPTY_FUNCTION_CALL_HASH,
         // 5-call witness
@@ -195,9 +195,12 @@ pub contract Eip712Account {
                 );
 
                 // 2. Verify args_hash matches
+                // Extract is_public flag to use the correct hash separator
+                let is_public = extract_is_public(serialized_payload, call_idx);
                 let computed_args_hash = compute_aztec_args_hash(
                     witness.function_args[call_idx],
-                    witness.args_lengths[call_idx]
+                    witness.args_lengths[call_idx],
+                    is_public
                 );
                 let stored_args_hash = extract_args_hash(serialized_payload, call_idx);
                 assert(
@@ -327,9 +330,12 @@ pub contract Eip712Account {
         // =====================================================================
         // Step 2: Verify the inner_hash can be reconstructed from witness data
         // =====================================================================
+        // Note: Authwits are typically used for private function authorization (approvals, transfers)
+        // so we use is_public=false here. The inner_hash is computed with FUNCTION_ARGS separator.
         let computed_args_hash = compute_aztec_args_hash(
             witness.function_args,
-            witness.args_length
+            witness.args_length,
+            false // Authwits use FUNCTION_ARGS separator (private function pattern)
         );
 
         let computed_selector = compute_function_selector(

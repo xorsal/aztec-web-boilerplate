@@ -79,11 +79,11 @@ describe('EIP-712 Helpers', () => {
   });
 
   describe('buildFunctionCallInput', () => {
-    it('should build FunctionCallInput for drip_to_private', () => {
+    it('should build FunctionCallInput for drip_to_private', async () => {
       const tokenAddress = 123456789n;
       const amount = 1000n;
 
-      const callInput = buildFunctionCallInput(
+      const callInput = await buildFunctionCallInput(
         tokenAddress,
         DripperArtifact,
         'drip_to_private',
@@ -98,10 +98,10 @@ describe('EIP-712 Helpers', () => {
       expect(callInput.args[1]).toBe(amount);
     });
 
-    it('should throw for non-existent method', () => {
-      expect(() =>
+    it('should throw for non-existent method', async () => {
+      await expect(
         buildFunctionCallInput(0n, DripperArtifact, 'nonexistent_method', [])
-      ).toThrow('Method nonexistent_method not found');
+      ).rejects.toThrow('Method nonexistent_method not found');
     });
   });
 

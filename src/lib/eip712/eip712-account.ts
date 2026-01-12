@@ -67,6 +67,10 @@ export interface FunctionCallInput {
   targetAddress: bigint;
   functionSignature: string;
   args: bigint[];
+  /** If true, this is a public function and args_hash should include the selector */
+  isPublic?: boolean;
+  /** Function selector (required for public functions) */
+  selector?: bigint;
 }
 
 // =============================================================================
@@ -219,7 +223,7 @@ export class Eip712Account {
       const call =
         i < calls.length
           ? calls[i]
-          : { targetAddress: 0n, functionSignature: '', args: [] };
+          : { targetAddress: 0n, functionSignature: '', args: [], isPublic: false };
 
       // Function signature as bytes
       const sigBytes = new TextEncoder().encode(call.functionSignature);
@@ -229,12 +233,22 @@ export class Eip712Account {
       signatureLengths.push(Math.min(sigBytes.length, MAX_SIGNATURE_SIZE));
 
       // Function args (padded)
-      const args = [...call.args];
-      while (args.length < MAX_SERIALIZED_ARGS) {
-        args.push(0n);
+      // CRITICAL: For public functions, prepend the selector to args to match AppPayload encoding
+      let argsWithSelector: bigint[];
+      let argsLength: number;
+      if (call.isPublic && call.selector !== undefined) {
+        argsWithSelector = [call.selector, ...call.args];
+        argsLength = call.args.length + 1; // +1 for selector
+      } else {
+        argsWithSelector = [...call.args];
+        argsLength = call.args.length;
       }
-      functionArgs.push(args.slice(0, MAX_SERIALIZED_ARGS));
-      argsLengths.push(Math.min(call.args.length, MAX_SERIALIZED_ARGS));
+
+      while (argsWithSelector.length < MAX_SERIALIZED_ARGS) {
+        argsWithSelector.push(0n);
+      }
+      functionArgs.push(argsWithSelector.slice(0, MAX_SERIALIZED_ARGS));
+      argsLengths.push(Math.min(argsLength, MAX_SERIALIZED_ARGS));
 
       targetAddresses.push(call.targetAddress);
     }

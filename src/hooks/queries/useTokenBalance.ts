@@ -2,13 +2,33 @@ import { useMemo, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { contractsConfig } from '../../config/contracts';
 import { WalletType } from '../../types/aztec';
-import { isBrowserWalletConnector } from '../../types/walletConnector';
+import { isBrowserWalletConnector, isExternalSignerConnector } from '../../types/walletConnector';
 import { isBrowserWalletPlaceholder, queuePxeCall } from '../../utils';
+import { buildFunctionCallInput } from '../../utils/eip712-helpers';
 import { useContractRegistration } from '../context/useContractRegistration';
 import { useContractRegistry } from '../context/useContractRegistry';
 import { useUniversalWallet } from '../context/useUniversalWallet';
 import { queryKeys } from './queryKeys';
 import type { SimulateViewsOp } from '../../types/browserWallet';
+import type { Eip712AuthWitnessProvider } from '../../accounts/Eip712AuthWitnessProvider';
+
+/**
+ * BN254 scalar field modulus (Fr modulus for Aztec's curve)
+ */
+const FR_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+/**
+ * Generate a random txNonce for EIP-712 signing.
+ */
+function generateRandomTxNonce(): bigint {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let value = 0n;
+  for (let i = 0; i < 32; i++) {
+    value = (value << 8n) | BigInt(bytes[i]);
+  }
+  return value % FR_MODULUS;
+}
 
 export interface TokenBalance {
   private: bigint;
@@ -57,6 +77,7 @@ export const useTokenBalance = (
     isLoading: isWalletLoading,
     currentConfig,
     walletType,
+    authWitnessProvider,
   } = useUniversalWallet();
   const { status: registryStatus } = useContractRegistry();
   const queryClient = useQueryClient();
@@ -124,7 +145,6 @@ export const useTokenBalance = (
           contractsConfig.token.address(currentConfig);
         const accountAddress = account!.getAddress().toString();
 
-        // NOTE: Simplified to only query private balance for debugging
         const operation: SimulateViewsOp = {
           kind: 'simulate_views',
           account: selectedAccount,
@@ -135,12 +155,12 @@ export const useTokenBalance = (
               method: 'balance_of_private',
               args: [accountAddress],
             },
-            // {
-            //   kind: 'call',
-            //   contract: tokenContractAddress,
-            //   method: 'balance_of_public',
-            //   args: [accountAddress],
-            // },
+            {
+              kind: 'call',
+              contract: tokenContractAddress,
+              method: 'balance_of_public',
+              args: [accountAddress],
+            },
           ],
         };
 
@@ -155,32 +175,66 @@ export const useTokenBalance = (
         // Result contains decoded values for each call
         const viewResult = result.result as { decoded: unknown[] };
         const privateBalance = BigInt(String(viewResult.decoded[0] ?? 0));
-        // const publicBalance = BigInt(String(viewResult.decoded[1] ?? 0));
+        const publicBalance = BigInt(String(viewResult.decoded[1] ?? 0));
 
         return {
           private: privateBalance,
-          public: 0n, // Disabled for debugging
+          public: publicBalance,
         };
       }
 
       const fromAddress = account!.getAddress();
 
-      const privateBalance = await queuePxeCall(() =>
-        token.methods
-          .balance_of_private(fromAddress)
-          .simulate({ from: fromAddress })
-      );
+      // Check if we should use EIP-712 clear signing for External Signer wallets
+      const eip712Provider = authWitnessProvider as Eip712AuthWitnessProvider | null;
+      const useEip712 = isExternalSigner &&
+        isExternalSignerConnector(connector) &&
+        eip712Provider?.setPendingTxContext;
 
-      // NOTE: Public balance querying disabled to reduce console noise during debugging
-      // const publicBalance = await queuePxeCall(() =>
-      //   token.methods
-      //     .balance_of_public(fromAddress)
-      //     .simulate({ from: fromAddress })
-      // );
+      // Helper to simulate with EIP-712 context
+      const simulateWithEip712 = async (methodName: string, args: unknown[]) => {
+        if (useEip712) {
+          try {
+            const callInput = await buildFunctionCallInput(
+              token.address,
+              token.artifact,
+              methodName,
+              args
+            );
+            const txNonce = generateRandomTxNonce();
+
+            console.log(`[useTokenBalance] Setting EIP-712 context for ${methodName}:`, {
+              functionSignature: callInput.functionSignature,
+              isPublic: callInput.isPublic,
+            });
+
+            eip712Provider!.setPendingTxContext({
+              calls: [callInput],
+              txNonce,
+            });
+          } catch (err) {
+            console.warn(`[useTokenBalance] Failed to set EIP-712 context for ${methodName}:`, err);
+          }
+        }
+
+        try {
+          const method = (token.methods as Record<string, (arg: unknown) => { simulate: (opts: { from: unknown }) => Promise<unknown> }>)[methodName];
+          return await queuePxeCall(() =>
+            method(args[0]).simulate({ from: fromAddress })
+          );
+        } finally {
+          if (useEip712 && eip712Provider?.clearPendingTxContext) {
+            eip712Provider.clearPendingTxContext();
+          }
+        }
+      };
+
+      const privateBalance = await simulateWithEip712('balance_of_private', [fromAddress]);
+      const publicBalance = await simulateWithEip712('balance_of_public', [fromAddress]);
 
       return {
         private: privateBalance as bigint,
-        public: 0n, // Disabled for debugging
+        public: publicBalance as bigint,
       };
     },
     enabled: isQueryEnabled,

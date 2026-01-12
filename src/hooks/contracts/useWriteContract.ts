@@ -8,7 +8,7 @@ import {
   isExternalSignerConnector,
 } from '../../types/walletConnector';
 import { waitForBrowserWalletReceipt } from '../../utils/txReceipt';
-import { buildFunctionCallInput } from '../../utils/eip712-helpers';
+import { buildFunctionCallInput, isConstrainedFunction } from '../../utils/eip712-helpers';
 import { useUniversalWallet } from '../context/useUniversalWallet';
 import type {
   MethodsOf,
@@ -22,6 +22,29 @@ import type { Eip712AuthWitnessProvider } from '../../accounts/Eip712AuthWitness
  * This is the maximum value that can be stored in an Fr field element.
  */
 const FR_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+/**
+ * Get the appropriate artifact for a function.
+ * Uses artifactForPublic for unconstrained public functions.
+ */
+function getArtifactForFunction(
+  contract: { artifact: ContractArtifact; artifactForPublic?: ContractArtifact },
+  functionName: string,
+  isConstrained: boolean
+): ContractArtifact {
+  // For constrained functions, use the regular artifact
+  if (isConstrained) {
+    return contract.artifact;
+  }
+
+  // For unconstrained public functions, prefer artifactForPublic if available
+  if (contract.artifactForPublic) {
+    return contract.artifactForPublic;
+  }
+
+  // Fall back to regular artifact
+  return contract.artifact;
+}
 
 /**
  * Generate a random txNonce for EIP-712 signing.
@@ -60,6 +83,8 @@ interface UseWriteContractOptions {
  */
 type ContractClassFor<TContract extends ContractBase> = {
   artifact: ContractArtifact;
+  /** Optional artifact that includes public function bytecode */
+  artifactForPublic?: ContractArtifact;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   at: (...args: any[]) => TContract;
 };
@@ -114,11 +139,23 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
       params: WriteContractParams<TContract, TMethod>
     ): Promise<WriteContractResult> => {
       const { contract, address, functionName, args } = params;
-      const artifact = contract.artifact;
 
       if (!connector || !account) {
         return { success: false, error: 'Wallet not connected' };
       }
+
+      // Determine if this is a constrained (private) function
+      // We need to know this to select the right artifact
+      const isConstrained = isConstrainedFunction(contract.artifact, String(functionName));
+
+      // Select the appropriate artifact - use artifactForPublic for unconstrained public functions
+      const artifact = getArtifactForFunction(contract, String(functionName), isConstrained);
+
+      console.log('[useWriteContract] Artifact selection:', {
+        functionName: String(functionName),
+        isConstrained,
+        usingArtifactForPublic: artifact !== contract.artifact,
+      });
 
       setIsPending(true);
       setError(null);
@@ -219,6 +256,15 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
           });
 
           if (isEip712 && isExternalSignerConnector(connector)) {
+            // EIP-712 clear signing works for both private and public functions
+            // The Noir contract uses the appropriate hash separator based on the is_public flag
+            const isConstrained = isConstrainedFunction(artifact, String(functionName));
+            console.log('[useWriteContract] Function check:', {
+              functionName: String(functionName),
+              isConstrained,
+              isPublic: !isConstrained,
+            });
+
             try {
               // Get the FPC (Fee Payment Contract) address from the sponsored fee payment method
               // The SDK adds an FPC call as the first call in the AppPayload, so we need to include it
@@ -232,14 +278,16 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
               // Order matters: FPC call comes first, then user call (same as SDK ordering)
 
               // FPC call: sponsor_unconditionally()
+              // This is a PRIVATE function in the FPC contract, so isPublic: false
               const fpcCallInput = {
                 targetAddress: fpcAddress.toField().toBigInt(),
                 functionSignature: 'sponsor_unconditionally()',
                 args: [] as bigint[],
+                isPublic: false,  // FPC sponsor is a private function
               };
 
               // User's call
-              const userCallInput = buildFunctionCallInput(
+              const userCallInput = await buildFunctionCallInput(
                 contractAddress,
                 artifact,
                 String(functionName),
@@ -265,7 +313,10 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
 
               console.log('[useWriteContract] Setting EIP-712 context with FPC + user call:', {
                 fpcFunction: fpcCallInput.functionSignature,
+                fpcIsPublic: fpcCallInput.isPublic,
                 userFunction: userCallInput.functionSignature,
+                userIsPublic: userCallInput.isPublic,
+                userSelector: userCallInput.selector?.toString(),
                 userArgs: userCallInput.args.map(String),
                 txNonce: txNonce.toString(),
               });
@@ -282,33 +333,42 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
           }
 
           try {
-            // Simulate first to catch revert reasons before sending
-            console.log(
-              `[useWriteContract] Simulating ${String(functionName)}...`
-            );
-            try {
-              // IMPORTANT: Pass paymentMethod to simulate() to match send() behavior
-              // Without this, the SDK won't include the FPC call in the AppPayload during simulation,
-              // causing a mismatch with our EIP-712 context which includes the FPC call
-              const simulateResult = await (
-                tx as { simulate: (opts: unknown) => Promise<unknown> }
-              ).simulate({
-                from: account.getAddress(),
-                fee: { paymentMethod },
-              });
+            // Only simulate constrained functions - unconstrained public functions
+            // are executed by the sequencer and don't need local simulation.
+            // Attempting to simulate them fails because loadContractArtifact filters
+            // out unconstrained functions from the artifact.
+            if (isConstrained) {
               console.log(
-                `[useWriteContract] Simulation successful:`,
-                simulateResult
+                `[useWriteContract] Simulating ${String(functionName)}...`
               );
-            } catch (simErr) {
-              const simErrorMsg =
-                simErr instanceof Error ? simErr.message : 'Simulation failed';
-              console.error(
-                `[useWriteContract] Simulation failed for ${String(functionName)}:`,
-                simErr
+              try {
+                // IMPORTANT: Pass paymentMethod to simulate() to match send() behavior
+                // Without this, the SDK won't include the FPC call in the AppPayload during simulation,
+                // causing a mismatch with our EIP-712 context which includes the FPC call
+                const simulateResult = await (
+                  tx as { simulate: (opts: unknown) => Promise<unknown> }
+                ).simulate({
+                  from: account.getAddress(),
+                  fee: { paymentMethod },
+                });
+                console.log(
+                  `[useWriteContract] Simulation successful:`,
+                  simulateResult
+                );
+              } catch (simErr) {
+                const simErrorMsg =
+                  simErr instanceof Error ? simErr.message : 'Simulation failed';
+                console.error(
+                  `[useWriteContract] Simulation failed for ${String(functionName)}:`,
+                  simErr
+                );
+                setError(simErrorMsg);
+                return { success: false, error: `Simulation failed: ${simErrorMsg}` };
+              }
+            } else {
+              console.log(
+                `[useWriteContract] Skipping simulation for unconstrained public function ${String(functionName)}`
               );
-              setError(simErrorMsg);
-              return { success: false, error: `Simulation failed: ${simErrorMsg}` };
             }
 
             console.log(`[useWriteContract] Sending ${String(functionName)}...`);
@@ -330,7 +390,12 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
               const txHash = await sentTx.getTxHash();
               console.log(`[useWriteContract] Transaction hash:`, txHash?.toString());
             } catch (hashErr) {
-              console.log(`[useWriteContract] Could not get tx hash:`, hashErr);
+              console.error(`[useWriteContract] Could not get tx hash:`, hashErr);
+              if (hashErr instanceof Error) {
+                console.error(`[useWriteContract] Error name:`, hashErr.name);
+                console.error(`[useWriteContract] Error message:`, hashErr.message);
+                console.error(`[useWriteContract] Error stack:`, hashErr.stack);
+              }
             }
 
             console.log(`[useWriteContract] Waiting for transaction confirmation (timeout: ${timeout}s)...`);
