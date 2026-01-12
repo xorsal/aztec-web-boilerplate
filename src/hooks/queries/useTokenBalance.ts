@@ -124,6 +124,7 @@ export const useTokenBalance = (
           contractsConfig.token.address(currentConfig);
         const accountAddress = account!.getAddress().toString();
 
+        // NOTE: Simplified to only query private balance for debugging
         const operation: SimulateViewsOp = {
           kind: 'simulate_views',
           account: selectedAccount,
@@ -134,12 +135,12 @@ export const useTokenBalance = (
               method: 'balance_of_private',
               args: [accountAddress],
             },
-            {
-              kind: 'call',
-              contract: tokenContractAddress,
-              method: 'balance_of_public',
-              args: [accountAddress],
-            },
+            // {
+            //   kind: 'call',
+            //   contract: tokenContractAddress,
+            //   method: 'balance_of_public',
+            //   args: [accountAddress],
+            // },
           ],
         };
 
@@ -154,11 +155,11 @@ export const useTokenBalance = (
         // Result contains decoded values for each call
         const viewResult = result.result as { decoded: unknown[] };
         const privateBalance = BigInt(String(viewResult.decoded[0] ?? 0));
-        const publicBalance = BigInt(String(viewResult.decoded[1] ?? 0));
+        // const publicBalance = BigInt(String(viewResult.decoded[1] ?? 0));
 
         return {
           private: privateBalance,
-          public: publicBalance,
+          public: 0n, // Disabled for debugging
         };
       }
 
@@ -170,15 +171,16 @@ export const useTokenBalance = (
           .simulate({ from: fromAddress })
       );
 
-      const publicBalance = await queuePxeCall(() =>
-        token.methods
-          .balance_of_public(fromAddress)
-          .simulate({ from: fromAddress })
-      );
+      // NOTE: Public balance querying disabled to reduce console noise during debugging
+      // const publicBalance = await queuePxeCall(() =>
+      //   token.methods
+      //     .balance_of_public(fromAddress)
+      //     .simulate({ from: fromAddress })
+      // );
 
       return {
         private: privateBalance as bigint,
-        public: publicBalance as bigint,
+        public: 0n, // Disabled for debugging
       };
     },
     enabled: isQueryEnabled,

@@ -33,11 +33,12 @@ export const MAX_SERIALIZED_ARGS = 20;
 export const MAX_SIGNATURE_SIZE = 128;
 
 // Default app domain for EIP-712 Aztec Wallet
+// NOTE: Salt must have a zero last byte because capsule serialization only packs 31 bytes
 export const DEFAULT_APP_DOMAIN: AppDomain = {
   name: 'EVM Aztec Wallet',
   version: '1.0.0',
   chainId: 31337n,
-  salt: '0x0000000000000000000000000000000000000000000000000000000000000001',
+  salt: '0x0100000000000000000000000000000000000000000000000000000000000000',
 };
 
 // EIP-712 domain for outer Aztec rollup (with verifyingContract)

@@ -90,6 +90,13 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
   // Pending transaction context (set before tx simulation)
   private pendingTxContext: PendingTxContext | null = null;
 
+  // Cached signature to avoid double-signing during simulate + send
+  private cachedSignature: {
+    txNonce: string;
+    signature: Uint8Array;
+    capsule: Capsule;
+  } | null = null;
+
   constructor(options: Eip712AuthWitnessProviderOptions) {
     this.walletClient = options.walletClient;
     this.account = options.account;
@@ -116,9 +123,11 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
 
   /**
    * Clear pending transaction context after use.
+   * Also clears the cached signature to ensure fresh signing on next transaction.
    */
   clearPendingTxContext(): void {
     this.pendingTxContext = null;
+    this.cachedSignature = null;
   }
 
   /**
@@ -127,6 +136,14 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
    */
   hasPendingTxContext(): boolean {
     return this.pendingTxContext !== null;
+  }
+
+  /**
+   * Get the pending transaction context.
+   * Used by the entrypoint to ensure the same txNonce is used for the AppPayload.
+   */
+  getPendingTxContext(): PendingTxContext | null {
+    return this.pendingTxContext;
   }
 
   /**
@@ -156,9 +173,38 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
   /**
    * Create EIP-712 typed data auth witness.
    * Signs with MetaMask and injects capsule.
+   *
+   * Uses signature caching to avoid prompting MetaMask twice during simulate + send.
+   * If we already have a cached signature for the current txNonce, we reuse it.
    */
   private async createEip712AuthWit(messageHash: Fr): Promise<AuthWitness> {
     const context = this.pendingTxContext!;
+    const txNonceKey = context.txNonce.toString();
+
+    console.log('[Eip712AuthWitnessProvider] Creating EIP-712 auth witness:', {
+      callCount: context.calls.length,
+      txNonce: txNonceKey,
+      hasCachedSignature: this.cachedSignature?.txNonce === txNonceKey,
+      calls: context.calls.map((c, i) => ({
+        index: i,
+        targetAddress: c.targetAddress.toString(16),
+        functionSignature: c.functionSignature,
+        argsCount: c.args.length,
+      })),
+    });
+
+    // Check if we already have a cached signature for this txNonce
+    if (this.cachedSignature && this.cachedSignature.txNonce === txNonceKey) {
+      console.log('[Eip712AuthWitnessProvider] Reusing cached signature for txNonce:', txNonceKey);
+
+      // Re-inject the cached capsule to PXE (may have been consumed during simulation)
+      await this.capsuleInjector.pushCapsule(this.cachedSignature.capsule);
+
+      console.log('[Eip712AuthWitnessProvider] Cached capsule re-injected to PXE');
+
+      // Return empty AuthWitness (actual data via Capsule)
+      return new AuthWitness(messageHash, []);
+    }
 
     // Build EIP-712 typed data
     const typedData = this.buildTypedData(context.calls, context.txNonce);
@@ -171,6 +217,11 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     // Sign with MetaMask
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const signature = await this.walletClient.signTypedData(typedData as any);
+
+    console.log('[Eip712AuthWitnessProvider] Got signature from MetaMask:', {
+      signatureLength: signature.length,
+      signaturePrefix: signature.slice(0, 20) + '...',
+    });
 
     // Parse signature (remove v, keep r || s)
     const sigBytes = hexToBytes(signature);
@@ -185,8 +236,24 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
       this.verifyingContract
     );
 
+    console.log('[Eip712AuthWitnessProvider] Capsule created:', {
+      contractAddress: this.contractAddress.toString(),
+      capsuleFieldCount: capsule.data.length,
+    });
+
+    // Cache the signature and capsule for potential reuse during send()
+    this.cachedSignature = {
+      txNonce: txNonceKey,
+      signature: ecdsaSignature,
+      capsule,
+    };
+
+    console.log('[Eip712AuthWitnessProvider] Signature cached for txNonce:', txNonceKey);
+
     // Inject capsule to PXE
     await this.capsuleInjector.pushCapsule(capsule);
+
+    console.log('[Eip712AuthWitnessProvider] Capsule injected to PXE');
 
     // Return empty AuthWitness (actual data via Capsule)
     // The contract will read from capsule slot EIP712_WITNESS_5_SLOT

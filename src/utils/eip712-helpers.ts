@@ -151,18 +151,45 @@ export function buildFunctionCallInput(
   const functionSignature = buildFunctionSignature(func);
 
   // Convert address to bigint
+  // IMPORTANT: For AztecAddress, we must use toField().toBigInt() to get the
+  // correct field representation that matches what AppPayload uses internally.
   let addressBigInt: bigint;
   if (typeof targetAddress === 'bigint') {
     addressBigInt = targetAddress;
   } else if (typeof targetAddress === 'string') {
     addressBigInt = BigInt(targetAddress);
   } else {
-    // AztecAddress
-    addressBigInt = (targetAddress as { toBigInt: () => bigint }).toBigInt();
+    // AztecAddress - must convert through toField() to match AppPayload encoding
+    const aztecAddr = targetAddress as {
+      toField: () => { toBigInt: () => bigint };
+      toBigInt?: () => bigint;
+    };
+    if (aztecAddr.toField) {
+      addressBigInt = aztecAddr.toField().toBigInt();
+    } else if (aztecAddr.toBigInt) {
+      addressBigInt = aztecAddr.toBigInt();
+    } else {
+      throw new Error('Cannot convert address to bigint: no toField or toBigInt method');
+    }
   }
 
   // Convert arguments to fields
   const fieldArgs = argsToFields(args);
+
+  // Debug logging to trace address conversion
+  console.log('[buildFunctionCallInput] Address conversion DETAILED:', {
+    inputType: typeof targetAddress,
+    inputValue: String(targetAddress),
+    hasToField: typeof targetAddress === 'object' && targetAddress !== null && 'toField' in targetAddress,
+    hasToBigInt: typeof targetAddress === 'object' && targetAddress !== null && 'toBigInt' in targetAddress,
+    outputBigInt: addressBigInt.toString(),
+    outputHex: '0x' + addressBigInt.toString(16).padStart(64, '0'),
+    // If AztecAddress, show intermediate steps
+    ...(typeof targetAddress === 'object' && targetAddress !== null && 'toField' in targetAddress ? {
+      toFieldResult: (targetAddress as any).toField().toString(),
+      toFieldToBigInt: (targetAddress as any).toField().toBigInt().toString(),
+    } : {}),
+  });
 
   return {
     targetAddress: addressBigInt,
