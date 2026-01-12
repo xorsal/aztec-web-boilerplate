@@ -39,12 +39,19 @@ export interface Eip712AccountEntrypointOptions {
 }
 
 /**
- * Encoded function call for an Aztec entrypoint (matches SDK's encoding.ts)
+ * Encoded function call for an Aztec entrypoint.
+ *
+ * IMPORTANT: encodeArguments expects PRIMITIVE values, not Fr objects.
+ * The encoder will create Fr internally from the primitives.
+ *
+ * - args_hash: bigint (Field value)
+ * - function_selector.value: number (u32) - NOTE: SDK encoder uses .value not .inner
+ * - target_address.inner: bigint (Field value)
  */
 interface EncodedFunctionCall {
-  args_hash: Fr;
-  function_selector: Fr;
-  target_address: Fr;
+  args_hash: bigint;                       // Field as bigint
+  function_selector: { value: number };    // u32 as number - encoder uses .value
+  target_address: { inner: bigint };       // Field as bigint
   is_public: boolean;
   hide_msg_sender: boolean;
   is_static: boolean;
@@ -52,12 +59,15 @@ interface EncodedFunctionCall {
 
 /**
  * EncodedAppEntrypointCalls - simplified version matching SDK's encoding
+ *
+ * IMPORTANT: All field values passed to encodeArguments must be primitives (bigint),
+ * not Fr objects. The encoder handles conversion internally.
  */
 class EncodedAppEntrypointCalls {
   private constructor(
     public readonly hashedArguments: HashedValues[],
     private readonly encodedFunctionCalls: EncodedFunctionCall[],
-    public readonly tx_nonce: Fr
+    public readonly tx_nonce: bigint  // bigint for encodeArguments
   ) {}
 
   // Snake_case getter for Noir compatibility
@@ -74,10 +84,12 @@ class EncodedAppEntrypointCalls {
     for (const call of calls) {
       const argsHash = await HashedValues.fromArgs(call.args);
       hashedArguments.push(argsHash);
+      // All field values must be bigint for encodeArguments
+      // NOTE: function_selector uses .value (not .inner) to match SDK's Selector class
       encodedFunctionCalls.push({
-        args_hash: argsHash.hash,
-        function_selector: call.selector.toField(),
-        target_address: call.to.toField(),
+        args_hash: argsHash.hash.toBigInt(),                        // bigint
+        function_selector: { value: Number(call.selector.toField().toBigInt()) },  // u32 - .value for SDK encoder
+        target_address: { inner: call.to.toField().toBigInt() },    // bigint
         is_public: false,
         hide_msg_sender: false,
         is_static: call.isStatic,
@@ -89,26 +101,26 @@ class EncodedAppEntrypointCalls {
       const emptyHash = await HashedValues.fromArgs([]);
       hashedArguments.push(emptyHash);
       encodedFunctionCalls.push({
-        args_hash: Fr.ZERO,
-        function_selector: Fr.ZERO,
-        target_address: Fr.ZERO,
+        args_hash: 0n,                         // bigint zero
+        function_selector: { value: 0 },       // u32 zero - .value for SDK encoder
+        target_address: { inner: 0n },         // bigint zero
         is_public: false,
         hide_msg_sender: false,
         is_static: false,
       });
     }
 
-    return new EncodedAppEntrypointCalls(hashedArguments, encodedFunctionCalls, nonce);
+    return new EncodedAppEntrypointCalls(hashedArguments, encodedFunctionCalls, nonce.toBigInt());
   }
 
   /**
-   * Serializes the function calls to an array of fields
+   * Serializes the function calls to an array of fields for hashing
    */
   private functionCallsToFields(): Fr[] {
     return this.encodedFunctionCalls.flatMap((call) => [
-      call.args_hash,
-      call.function_selector,
-      call.target_address,
+      new Fr(call.args_hash),                  // Convert bigint to Fr
+      new Fr(call.function_selector.value),    // Convert u32 to Fr - .value to match SDK
+      new Fr(call.target_address.inner),       // Convert bigint to Fr
       new Fr(call.is_public ? 1 : 0),
       new Fr(call.hide_msg_sender ? 1 : 0),
       new Fr(call.is_static ? 1 : 0),
@@ -116,10 +128,10 @@ class EncodedAppEntrypointCalls {
   }
 
   /**
-   * Serializes the payload to an array of fields
+   * Serializes the payload to an array of fields for hashing
    */
   toFields(): Fr[] {
-    return [...this.functionCallsToFields(), this.tx_nonce];
+    return [...this.functionCallsToFields(), new Fr(this.tx_nonce)];
   }
 
   async hash(): Promise<Fr> {
@@ -163,6 +175,85 @@ export class Eip712AccountEntrypoint implements EntrypointInterface {
     // Select the appropriate entrypoint
     const entrypointName = useEip712Entrypoint ? 'entrypoint5' : 'entrypoint';
 
+    // CRITICAL: For EIP-712 entrypoint, we must use the same txNonce that was used for signing.
+    // The pendingTxContext contains the nonce that was signed by the user in MetaMask.
+    // If we use a different nonce here, signature verification will fail.
+    let effectiveTxNonce = txNonce;
+    if (useEip712Entrypoint && typeof eip712Provider.getPendingTxContext === 'function') {
+      const pendingContext = eip712Provider.getPendingTxContext();
+      if (pendingContext) {
+        effectiveTxNonce = new Fr(pendingContext.txNonce);
+        console.log('[Eip712AccountEntrypoint] Using txNonce from pendingContext:', {
+          pendingTxNonce: pendingContext.txNonce.toString(),
+          effectiveTxNonce: effectiveTxNonce.toString(),
+          originalTxNonce: txNonce?.toString() ?? 'undefined',
+        });
+      }
+    } else if (useEip712Entrypoint) {
+      console.warn('[Eip712AccountEntrypoint] EIP-712 entrypoint selected but no pendingContext available!');
+    }
+
+    // Debug: Log the calls that will be encoded into AppPayload
+    console.log('[Eip712AccountEntrypoint] SDK CALLS RAW:', {
+      callCount: calls.length,
+      calls: calls.map((call, i) => ({
+        index: i,
+        to_toString: call.to.toString(),
+        to_toField: call.to.toField().toString(),
+        to_toField_toBigInt: call.to.toField().toBigInt().toString(),
+        to_toField_toHex: '0x' + call.to.toField().toBigInt().toString(16).padStart(64, '0'),
+        selector: call.selector.toString(),
+        argsCount: call.args.length,
+      })),
+    });
+
+    // CRITICAL DEBUG: Compare capsule address vs AppPayload address for ALL calls
+    if (useEip712Entrypoint && typeof eip712Provider.getPendingTxContext === 'function') {
+      const pendingCtx = eip712Provider.getPendingTxContext();
+
+      console.log('[Eip712AccountEntrypoint] CALL COUNTS:', {
+        capsuleCallCount: pendingCtx?.calls.length ?? 0,
+        sdkCallCount: calls.length,
+        pendingCtxExists: !!pendingCtx,
+      });
+
+      if (pendingCtx && pendingCtx.calls.length > 0) {
+        // Log ALL capsule addresses
+        console.log('[Eip712AccountEntrypoint] CAPSULE CALLS:', pendingCtx.calls.map((c, i) => ({
+          index: i,
+          targetAddress: c.targetAddress.toString(),
+          targetAddressHex: '0x' + c.targetAddress.toString(16).padStart(64, '0'),
+          functionSignature: c.functionSignature,
+        })));
+      }
+
+      if (calls.length > 0) {
+        // Log ALL SDK calls
+        console.log('[Eip712AccountEntrypoint] SDK CALLS ADDRESSES:', calls.map((c, i) => ({
+          index: i,
+          to: c.to.toField().toBigInt().toString(),
+          toHex: '0x' + c.to.toField().toBigInt().toString(16).padStart(64, '0'),
+          selector: c.selector.toString(),
+        })));
+      }
+
+      // Compare each pair
+      if (pendingCtx && pendingCtx.calls.length > 0 && calls.length > 0) {
+        for (let i = 0; i < Math.min(pendingCtx.calls.length, calls.length); i++) {
+          const capsuleAddr = pendingCtx.calls[i].targetAddress;
+          const sdkAddr = calls[i].to.toField().toBigInt();
+
+          console.log(`[Eip712AccountEntrypoint] COMPARE CALL ${i}:`, {
+            capsule: capsuleAddr.toString(),
+            sdk: sdkAddr.toString(),
+            match: capsuleAddr === sdkAddr,
+            capsuleHex: '0x' + capsuleAddr.toString(16).padStart(64, '0'),
+            sdkHex: '0x' + sdkAddr.toString(16).padStart(64, '0'),
+          });
+        }
+      }
+    }
+
     // Encode the calls for the app
     const encodedCalls = await EncodedAppEntrypointCalls.create(
       calls.map((call) => ({
@@ -171,7 +262,7 @@ export class Eip712AccountEntrypoint implements EntrypointInterface {
         args: call.args,
         isStatic: call.isStatic ?? false,
       })),
-      txNonce
+      effectiveTxNonce
     );
 
     // Obtain the entrypoint hashed args, built from the app encoded calls and global options

@@ -17,6 +17,33 @@ import type {
 } from '../../types/contractTypes';
 import type { Eip712AuthWitnessProvider } from '../../accounts/Eip712AuthWitnessProvider';
 
+/**
+ * BN254 scalar field modulus (Fr modulus for Aztec's curve)
+ * This is the maximum value that can be stored in an Fr field element.
+ */
+const FR_MODULUS = 21888242871839275222246405745257275088548364400416034343698204186575808495617n;
+
+/**
+ * Generate a random txNonce for EIP-712 signing.
+ * Must be unique per transaction to prevent replay attacks.
+ * The nonce MUST be less than the Fr field modulus to avoid modular reduction
+ * when converting to Fr, which would cause a mismatch between signed and verified values.
+ */
+function generateRandomTxNonce(): bigint {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+
+  // Convert to bigint
+  let value = 0n;
+  for (let i = 0; i < 32; i++) {
+    value = (value << 8n) | BigInt(bytes[i]);
+  }
+
+  // Reduce modulo FR_MODULUS to ensure it fits in an Fr field element
+  // This ensures the same value is used for both signing and verification
+  return value % FR_MODULUS;
+}
+
 interface UseWriteContractOptions {
   /** Timeout for transaction confirmation (ms) - used by embedded wallet */
   timeout?: number;
@@ -183,26 +210,69 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
           const eip712Provider = authWitnessProvider as Eip712AuthWitnessProvider | null;
           const isEip712 = isExternalSignerConnector(connector) && eip712Provider?.setPendingTxContext;
 
-          if (isEip712) {
+          console.log('[useWriteContract] EIP-712 check:', {
+            connectorType: connector?.type,
+            isExternalSigner: isExternalSignerConnector(connector),
+            hasEip712Provider: !!eip712Provider,
+            hasSetPendingTxContext: !!eip712Provider?.setPendingTxContext,
+            isEip712,
+          });
+
+          if (isEip712 && isExternalSignerConnector(connector)) {
             try {
-              // Build EIP-712 context from function call
-              const callInput = buildFunctionCallInput(
+              // Get the FPC (Fee Payment Contract) address from the sponsored fee payment method
+              // The SDK adds an FPC call as the first call in the AppPayload, so we need to include it
+              // in the EIP-712 typed data to match what the contract will verify.
+              const feePaymentMethod = await connector.getSponsoredFeePaymentMethod();
+              const fpcAddress = await feePaymentMethod.getFeePayer();
+
+              console.log('[useWriteContract] FPC address:', fpcAddress.toString());
+
+              // Build EIP-712 context with BOTH the FPC call AND the user's call
+              // Order matters: FPC call comes first, then user call (same as SDK ordering)
+
+              // FPC call: sponsor_unconditionally()
+              const fpcCallInput = {
+                targetAddress: fpcAddress.toField().toBigInt(),
+                functionSignature: 'sponsor_unconditionally()',
+                args: [] as bigint[],
+              };
+
+              // User's call
+              const userCallInput = buildFunctionCallInput(
                 contractAddress,
                 artifact,
                 String(functionName),
                 args as unknown[]
               );
 
-              // Get tx nonce (use 0 for now, will be updated by kernel)
-              const txNonce = 0n;
+              // Generate a unique random txNonce for this transaction.
+              // This nonce is signed by the user and verified by the contract.
+              // The Eip712AccountEntrypoint will use this same nonce for the AppPayload.
+              const txNonce = generateRandomTxNonce();
 
-              console.log('[useWriteContract] Setting EIP-712 context:', {
-                function: callInput.functionSignature,
-                args: callInput.args.map(String),
+              // Debug: Log the exact address values for comparison
+              console.log('[useWriteContract] Address debug:', {
+                inputAddress: address,
+                contractAddressString: contractAddress.toString(),
+                contractAddressToField: contractAddress.toField().toString(),
+                contractAddressToFieldBigInt: contractAddress.toField().toBigInt().toString(),
+                userCallTargetAddress: userCallInput.targetAddress.toString(),
+                userCallTargetAddressHex: '0x' + userCallInput.targetAddress.toString(16).padStart(64, '0'),
+                fpcAddressHex: '0x' + fpcCallInput.targetAddress.toString(16).padStart(64, '0'),
+                argsConverted: userCallInput.args.map(a => a.toString()),
               });
 
+              console.log('[useWriteContract] Setting EIP-712 context with FPC + user call:', {
+                fpcFunction: fpcCallInput.functionSignature,
+                userFunction: userCallInput.functionSignature,
+                userArgs: userCallInput.args.map(String),
+                txNonce: txNonce.toString(),
+              });
+
+              // Include BOTH calls in the order SDK will construct them
               eip712Provider.setPendingTxContext({
-                calls: [callInput],
+                calls: [fpcCallInput, userCallInput],
                 txNonce,
               });
             } catch (contextErr) {
@@ -217,9 +287,15 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
               `[useWriteContract] Simulating ${String(functionName)}...`
             );
             try {
+              // IMPORTANT: Pass paymentMethod to simulate() to match send() behavior
+              // Without this, the SDK won't include the FPC call in the AppPayload during simulation,
+              // causing a mismatch with our EIP-712 context which includes the FPC call
               const simulateResult = await (
                 tx as { simulate: (opts: unknown) => Promise<unknown> }
-              ).simulate({ from: account.getAddress() });
+              ).simulate({
+                from: account.getAddress(),
+                fee: { paymentMethod },
+              });
               console.log(
                 `[useWriteContract] Simulation successful:`,
                 simulateResult
@@ -235,10 +311,13 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
               return { success: false, error: `Simulation failed: ${simErrorMsg}` };
             }
 
+            console.log(`[useWriteContract] Sending ${String(functionName)}...`);
+
             const sentTx = (
               tx as {
                 send: (opts: unknown) => {
                   wait: (opts: unknown) => Promise<unknown>;
+                  getTxHash: () => Promise<unknown>;
                 };
               }
             ).send({
@@ -246,7 +325,17 @@ export const useWriteContract = (options: UseWriteContractOptions = {}) => {
               fee: { paymentMethod },
             });
 
+            // Get transaction hash immediately after send
+            try {
+              const txHash = await sentTx.getTxHash();
+              console.log(`[useWriteContract] Transaction hash:`, txHash?.toString());
+            } catch (hashErr) {
+              console.log(`[useWriteContract] Could not get tx hash:`, hashErr);
+            }
+
+            console.log(`[useWriteContract] Waiting for transaction confirmation (timeout: ${timeout}s)...`);
             const result = await sentTx.wait({ timeout });
+            console.log(`[useWriteContract] Transaction confirmed:`, result);
 
             return {
               success: true,
