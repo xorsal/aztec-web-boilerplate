@@ -18,12 +18,12 @@ use dep::aztec::oracle::capsules;
 // Pre-computed Type Hashes (from verify-signature.ts)
 // =============================================================================
 
-// keccak256("FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)")
+// keccak256("FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)")
 global FUNCTION_CALL_TYPE_HASH: [u8; 32] = [
-    0xbc, 0xb4, 0x42, 0x55, 0x87, 0xc5, 0x5d, 0x02,
-    0x21, 0x39, 0x40, 0xc3, 0x1e, 0x39, 0x32, 0xab,
-    0x28, 0x67, 0x74, 0x42, 0xf7, 0x8c, 0x4d, 0x15,
-    0x12, 0xa6, 0xd6, 0x6b, 0xf6, 0xd9, 0x6e, 0x86
+    0x46, 0x20, 0x5b, 0xe3, 0x8e, 0x04, 0xe8, 0x7a,
+    0x34, 0x00, 0x63, 0xfd, 0x28, 0x93, 0x2b, 0x41,
+    0x45, 0x27, 0x17, 0x97, 0x51, 0x42, 0x7a, 0xe9,
+    0x0a, 0x61, 0xc6, 0x34, 0xd7, 0x80, 0x51, 0x84
 ];
 
 // keccak256("AppDomain(string name,string version,uint256 chainId,bytes32 salt)")
@@ -34,12 +34,12 @@ global APP_DOMAIN_TYPE_HASH: [u8; 32] = [
     0x48, 0xf9, 0xaf, 0x5d, 0x2c, 0xd4, 0xd9, 0xf7
 ];
 
-// keccak256("EntrypointAuthorization(AppDomain appDomain,FunctionCall[5] functionCalls,uint256 txNonce)AppDomain(...)FunctionCall(... isPrivate)")
+// keccak256("EntrypointAuthorization(AppDomain appDomain,FunctionCall[5] functionCalls,uint256 txNonce)AppDomain(...)FunctionCall(...selector...isPrivate)")
 global ENTRYPOINT_AUTHORIZATION_5_TYPE_HASH: [u8; 32] = [
-    0xc9, 0x84, 0xd9, 0x56, 0x32, 0x26, 0x80, 0x2b,
-    0x62, 0xdf, 0x86, 0x1b, 0x31, 0x70, 0x94, 0xab,
-    0x66, 0x73, 0x54, 0x73, 0x12, 0xfe, 0x52, 0xb8,
-    0xca, 0xa2, 0xb7, 0x67, 0xad, 0x3a, 0xd9, 0xe7
+    0x3e, 0xf5, 0x27, 0x80, 0x5f, 0x9a, 0xc9, 0xb7,
+    0xcf, 0x36, 0x12, 0x41, 0x6b, 0x6c, 0xb6, 0xc3,
+    0x39, 0x13, 0xde, 0xa5, 0x0c, 0xdf, 0x71, 0xe2,
+    0x06, 0x08, 0xa6, 0xa3, 0x34, 0x7d, 0x02, 0x76
 ];
 
 // keccak256("AuthwitAppDomain(uint256 chainId,bytes32 verifyingContract)")
@@ -50,21 +50,21 @@ global AUTHWIT_APP_DOMAIN_TYPE_HASH: [u8; 32] = [
     0x00, 0xef, 0x42, 0xba, 0x77, 0x71, 0x66, 0x8c
 ];
 
-// keccak256("FunctionCallAuthorization(AuthwitAppDomain appDomain,FunctionCall functionCall)AuthwitAppDomain(...)FunctionCall(... isPrivate)")
+// keccak256("FunctionCallAuthorization(AuthwitAppDomain appDomain,FunctionCall functionCall)AuthwitAppDomain(...)FunctionCall(...selector...isPrivate)")
 global FUNCTION_CALL_AUTHORIZATION_TYPE_HASH: [u8; 32] = [
-    0x08, 0xd9, 0x8e, 0x46, 0x71, 0xb9, 0x17, 0x57,
-    0x9f, 0xdc, 0x62, 0x4c, 0xd5, 0x64, 0xad, 0x4a,
-    0x1d, 0xc7, 0x29, 0x91, 0xe6, 0x45, 0xf7, 0x12,
-    0x65, 0x4b, 0xa2, 0x82, 0x19, 0xff, 0xb5, 0xe1
+    0x01, 0xa9, 0x27, 0xb4, 0x32, 0x5f, 0xd5, 0x4e,
+    0x43, 0x61, 0xe6, 0x0e, 0xa3, 0x21, 0x8d, 0x67,
+    0x6a, 0x45, 0x4e, 0xa9, 0x1b, 0xae, 0xa6, 0xf9,
+    0x00, 0x80, 0x15, 0xf6, 0xe3, 0xd2, 0xbd, 0x17
 ];
 
 // Hash of empty FunctionCall struct (for padding empty slots in 5-call array)
-// hashStruct(FunctionCall{contract: 0, functionSignature: "", arguments: [], isPrivate: true})
+// hashStruct(FunctionCall{contract: 0, functionSignature: "", selector: 0, arguments: [], isPrivate: true})
 pub global EMPTY_FUNCTION_CALL_HASH: [u8; 32] = [
-    0x7a, 0x9f, 0x1a, 0xbe, 0xd0, 0xf1, 0x7b, 0xe2,
-    0x96, 0x36, 0x0b, 0xf4, 0x0a, 0xff, 0x57, 0x23,
-    0x9f, 0xff, 0xf0, 0xbd, 0x19, 0x3d, 0x2e, 0x7c,
-    0xb1, 0x04, 0x6a, 0x5e, 0x14, 0xcf, 0x88, 0x46
+    0x0c, 0xd9, 0xa5, 0x85, 0xe1, 0xc6, 0x59, 0x6b,
+    0x00, 0x6a, 0xf7, 0xa9, 0xea, 0x5e, 0xc1, 0x02,
+    0x15, 0xb7, 0x96, 0xe2, 0x7b, 0x83, 0x17, 0x1d,
+    0x64, 0x60, 0xb8, 0x04, 0xee, 0x04, 0xbc, 0xa4
 ];
 
 // =============================================================================
@@ -95,14 +95,15 @@ pub struct Eip712Witness5 {
     pub function_args: [[Field; MAX_SERIALIZED_ARGS]; ACCOUNT_MAX_CALLS],
     pub args_lengths: [u32; ACCOUNT_MAX_CALLS],
     pub target_addresses: [Field; ACCOUNT_MAX_CALLS],
+    pub selectors: [Field; ACCOUNT_MAX_CALLS], // Function selectors (0 for private functions)
 
     // Shared metadata
     pub chain_id: Field,
     pub salt: [u8; 32],
 }
 
-// Serialization size: 145 Fields
-pub global EIP712_WITNESS_5_SERIALIZED_LEN: u32 = 145;
+// Serialization size: 150 Fields (was 145, +5 for selectors)
+pub global EIP712_WITNESS_5_SERIALIZED_LEN: u32 = 150;
 
 impl Serialize for Eip712Witness5 {
     let N: u32 = EIP712_WITNESS_5_SERIALIZED_LEN;
@@ -120,9 +121,9 @@ impl Serialize for Eip712Witness5 {
         result[1] = pack_bytes_to_field(combined);
         result[2] = (self.signature_s[30] as Field) * 256 + (self.signature_s[31] as Field);
 
-        // [3-142]: 5 calls, each 28 fields
+        // [3-147]: 5 calls, each 29 fields (was 28, +1 for selector)
         for call_idx in 0..ACCOUNT_MAX_CALLS {
-            let base = 3 + call_idx * 28;
+            let base = 3 + call_idx * 29;
 
             // Function signature (128 bytes = 5 fields: 31+31+31+31+4)
             for i in 0..4 {
@@ -152,13 +153,16 @@ impl Serialize for Eip712Witness5 {
 
             // Target address
             result[base + 27] = self.target_addresses[call_idx];
+
+            // Selector (NEW)
+            result[base + 28] = self.selectors[call_idx];
         }
 
-        // [143]: chain_id
-        result[143] = self.chain_id;
+        // [148]: chain_id
+        result[148] = self.chain_id;
 
-        // [144]: salt (first 31 bytes)
-        result[144] = pack_bytes_31(self.salt, 0);
+        // [149]: salt (first 31 bytes)
+        result[149] = pack_bytes_31(self.salt, 0);
 
         result
     }
@@ -177,15 +181,16 @@ impl Deserialize for Eip712Witness5 {
             signature_s[i] = sig_bytes[32 + i];
         }
 
-        // [3-142]: 5 calls, each 28 fields
+        // [3-147]: 5 calls, each 29 fields (was 28, +1 for selector)
         let mut function_signatures: [[u8; MAX_SIGNATURE_SIZE]; ACCOUNT_MAX_CALLS] = [[0; MAX_SIGNATURE_SIZE]; ACCOUNT_MAX_CALLS];
         let mut signature_lengths: [u32; ACCOUNT_MAX_CALLS] = [0; ACCOUNT_MAX_CALLS];
         let mut function_args: [[Field; MAX_SERIALIZED_ARGS]; ACCOUNT_MAX_CALLS] = [[0; MAX_SERIALIZED_ARGS]; ACCOUNT_MAX_CALLS];
         let mut args_lengths: [u32; ACCOUNT_MAX_CALLS] = [0; ACCOUNT_MAX_CALLS];
         let mut target_addresses: [Field; ACCOUNT_MAX_CALLS] = [0; ACCOUNT_MAX_CALLS];
+        let mut selectors: [Field; ACCOUNT_MAX_CALLS] = [0; ACCOUNT_MAX_CALLS];
 
         for call_idx in 0..ACCOUNT_MAX_CALLS {
-            let base = 3 + call_idx * 28;
+            let base = 3 + call_idx * 29;
 
             // Function signature (5 fields)
             function_signatures[call_idx] = unpack_func_sig_from_fields([
@@ -205,13 +210,16 @@ impl Deserialize for Eip712Witness5 {
 
             // Target address
             target_addresses[call_idx] = fields[base + 27];
+
+            // Selector (NEW)
+            selectors[call_idx] = fields[base + 28];
         }
 
-        // [143]: chain_id
-        let chain_id = fields[143];
+        // [148]: chain_id
+        let chain_id = fields[148];
 
-        // [144]: salt
-        let salt = unpack_salt_from_field(fields[144]);
+        // [149]: salt
+        let salt = unpack_salt_from_field(fields[149]);
 
         Eip712Witness5 {
             signature_r,
@@ -221,6 +229,7 @@ impl Deserialize for Eip712Witness5 {
             function_args,
             args_lengths,
             target_addresses,
+            selectors,
             chain_id,
             salt,
         }
@@ -500,21 +509,23 @@ pub fn hash_uint256_array(args: [Field; MAX_SERIALIZED_ARGS], len: u32) -> [u8; 
 
 /**
  * Compute hashStruct(FunctionCall)
- * Includes is_private for EIP-712 clear signing visibility
+ * Includes selector and is_private for EIP-712 clear signing visibility
  */
 pub fn hash_function_call(
     target_address: [u8; 32],
     function_signature: [u8; MAX_SIGNATURE_SIZE],
     sig_len: u32,
+    selector: Field,
     arguments: [Field; MAX_SERIALIZED_ARGS],
     args_len: u32,
     is_private: bool
 ) -> [u8; 32] {
     let sig_hash = hash_string(function_signature, sig_len);
+    let selector_bytes: [u8; 32] = selector.to_be_bytes();
     let args_hash = hash_uint256_array(arguments, args_len);
 
-    // Concatenate: typeHash (32) || contract (32) || sig_hash (32) || args_hash (32) || is_private (32) = 160 bytes
-    let mut data: [u8; 160] = [0; 160];
+    // Concatenate: typeHash (32) || contract (32) || sig_hash (32) || selector (32) || args_hash (32) || is_private (32) = 192 bytes
+    let mut data: [u8; 192] = [0; 192];
 
     for i in 0..32 {
         data[i] = FUNCTION_CALL_TYPE_HASH[i];
@@ -529,16 +540,20 @@ pub fn hash_function_call(
     }
 
     for i in 0..32 {
-        data[96 + i] = args_hash[i];
+        data[96 + i] = selector_bytes[i];
+    }
+
+    for i in 0..32 {
+        data[128 + i] = args_hash[i];
     }
 
     // EIP-712 bool encoding: 0 for false, 1 for true (right-padded to 32 bytes)
-    // is_private goes in the last byte (index 159) since it's big-endian uint256
+    // is_private goes in the last byte (index 191) since it's big-endian uint256
     if is_private {
-        data[159] = 1;
+        data[191] = 1;
     }
 
-    keccak256(data, 160)
+    keccak256(data, 192)
 }
 
 /**
@@ -707,24 +722,38 @@ pub fn field_to_bytes32(f: Field) -> [u8; 32] {
  *
  * This matches the SDK's HashedValues.fromArgs() vs fromCalldata() methods.
  */
-pub fn compute_aztec_args_hash(args: [Field; MAX_SERIALIZED_ARGS], len: u32, is_public: bool) -> Field {
-    if len == 0 {
-        0
-    } else {
-        let mut input: [Field; 21] = [0; 21];
-        // Use appropriate generator index based on function type
-        let generator_index = if is_public {
-            GENERATOR_INDEX__PUBLIC_CALLDATA
-        } else {
-            GENERATOR_INDEX__FUNCTION_ARGS
-        };
+pub fn compute_aztec_args_hash(args: [Field; MAX_SERIALIZED_ARGS], len: u32, is_public: bool, selector: Field) -> Field {
+    // For public functions, selector is prepended to args in the AppPayload
+    // For private functions, selector is not included (it's 0)
+    if is_public {
+        // Public: prepend selector to args
+        // Note: For public calls, selector is always included even if len == 0
+        // Args with selector prepended: [selector, arg0, arg1, ...]
+        let mut input: [Field; 22] = [0; 22];
+        let generator_index = GENERATOR_INDEX__PUBLIC_CALLDATA;
         input[0] = generator_index as Field;
+        input[1] = selector; // Selector goes first
         for i in 0..MAX_SERIALIZED_ARGS {
-            input[i + 1] = args[i];
+            input[i + 2] = args[i];
         }
-
-        let message_size = len + 1;
+        // Total size: 1 (generator) + 1 (selector) + len (args) = len + 2
+        // But the generator index slot is already accounted for in poseidon2_hash_subarray
+        let message_size = len + 2; // +1 for generator, +1 for selector
         poseidon2_hash_subarray(input, message_size)
+    } else {
+        // Private: no selector
+        if len == 0 {
+            0
+        } else {
+            let mut input: [Field; 21] = [0; 21];
+            let generator_index = GENERATOR_INDEX__FUNCTION_ARGS;
+            input[0] = generator_index as Field;
+            for i in 0..MAX_SERIALIZED_ARGS {
+                input[i + 1] = args[i];
+            }
+            let message_size = len + 1;
+            poseidon2_hash_subarray(input, message_size)
+        }
     }
 }
 

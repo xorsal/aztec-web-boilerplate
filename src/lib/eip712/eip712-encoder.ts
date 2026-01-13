@@ -57,7 +57,7 @@ export const TYPE_HASHES = {
   FUNCTION_CALL: keccak256(
     encodePacked(
       ['string'],
-      ['FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)']
+      ['FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)']
     )
   ),
   APP_DOMAIN: keccak256(
@@ -72,7 +72,7 @@ export const TYPE_HASHES = {
       [
         'EntrypointAuthorization(AppDomain appDomain,FunctionCall[5] functionCalls,uint256 txNonce)' +
           'AppDomain(string name,string version,uint256 chainId,bytes32 salt)' +
-          'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)',
+          'FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)',
       ]
     )
   ),
@@ -88,7 +88,7 @@ export const TYPE_HASHES = {
       [
         'FunctionCallAuthorization(AuthwitAppDomain appDomain,FunctionCall functionCall)' +
           'AuthwitAppDomain(uint256 chainId,bytes32 verifyingContract)' +
-          'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)',
+          'FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)',
       ]
     )
   ),
@@ -196,7 +196,8 @@ export class Eip712Encoder {
     targetAddress: bigint | Hex,
     functionSignature: string,
     args: bigint[],
-    isPrivate: boolean = true
+    isPrivate: boolean = true,
+    selector: bigint = 0n
   ): FunctionCall {
     const contract =
       typeof targetAddress === 'bigint'
@@ -216,6 +217,7 @@ export class Eip712Encoder {
     return {
       contract,
       functionSignature,
+      selector,
       arguments: args,
       isPrivate,
     };
@@ -226,6 +228,7 @@ export class Eip712Encoder {
    */
   static hashFunctionCall(call: FunctionCall): Hex {
     const sigHash = keccak256(encodePacked(['string'], [call.functionSignature]));
+    const selectorEncoded = pad(toHex(call.selector), { size: 32 });
     const argsEncoded =
       call.arguments.length > 0
         ? concat(call.arguments.map((arg) => pad(toHex(arg), { size: 32 })))
@@ -235,7 +238,7 @@ export class Eip712Encoder {
     const isPrivateEncoded = pad(toHex(call.isPrivate ? 1n : 0n), { size: 32 });
 
     return keccak256(
-      concat([TYPE_HASHES.FUNCTION_CALL, call.contract, sigHash, argsHash, isPrivateEncoded])
+      concat([TYPE_HASHES.FUNCTION_CALL, call.contract, sigHash, selectorEncoded, argsHash, isPrivateEncoded])
     );
   }
 

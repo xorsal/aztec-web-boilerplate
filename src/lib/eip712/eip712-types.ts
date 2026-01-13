@@ -15,6 +15,7 @@ import type { Hex } from 'viem';
 export interface FunctionCall {
   contract: Hex; // bytes32 - target_address as 32 bytes
   functionSignature: string; // Full signature e.g. "transfer_private(Field,Field,u128,Field)"
+  selector: bigint; // uint256 - function selector (0n for private functions)
   arguments: bigint[]; // uint256[] - serialized args (THE PRE-IMAGE!)
   isPrivate: boolean; // Whether this is a private function call
 }
@@ -89,6 +90,7 @@ export const EIP712_TYPES_5 = {
   FunctionCall: [
     { name: 'contract', type: 'bytes32' },
     { name: 'functionSignature', type: 'string' },
+    { name: 'selector', type: 'uint256' },
     { name: 'arguments', type: 'uint256[]' },
     { name: 'isPrivate', type: 'bool' },
   ],
@@ -119,6 +121,7 @@ export const EMPTY_FUNCTION_CALL: FunctionCall = {
   contract:
     '0x0000000000000000000000000000000000000000000000000000000000000000',
   functionSignature: '',
+  selector: 0n,
   arguments: [],
   isPrivate: true, // Default to true for empty calls
 };
@@ -144,7 +147,7 @@ export const MAX_SERIALIZED_ARGS = 20;
 export const MAX_SIGNATURE_SIZE = 128;
 
 /** Serialized size of Eip712Witness5 (5 calls) in Fields */
-export const EIP712_WITNESS_5_SERIALIZED_LEN = 145;
+export const EIP712_WITNESS_5_SERIALIZED_LEN = 150;
 
 /** Serialized size of Eip712AuthwitWitness in Fields */
 export const EIP712_AUTHWIT_SERIALIZED_LEN = 34;
