@@ -23,17 +23,18 @@ import {
  * Noir constants (copied from contracts/eip712_account/src/eip712.nr and main.nr)
  * These are the ground truth values that TypeScript must match.
  *
- * NOTE: FunctionCall now includes `selector` and `isPrivate` fields for clear signing visibility:
- * FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)
+ * NOTE: selector is NOT included in FunctionCall - it's derived from functionSignature via Poseidon2:
+ * FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)
  */
 const NOIR_CONSTANTS = {
-  // From eip712.nr (with selector and isPrivate fields in FunctionCall)
-  FUNCTION_CALL_TYPE_HASH: '0x46205be38e04e87a340063fd28932b414527179751427ae90a61c634d7805184',
+  // From eip712.nr (selector NOT included - derived from functionSignature via Poseidon2)
+  // FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)
+  FUNCTION_CALL_TYPE_HASH: '0xbcb4425587c55d02213940c31e3932ab28677442f78c4d1512a6d66bf6d96e86',
   APP_DOMAIN_TYPE_HASH: '0xca2212a93d16a0157ab9c731e0ce9d0ae0cb4571382c7bfe48f9af5d2cd4d9f7',
-  ENTRYPOINT_AUTHORIZATION_5_TYPE_HASH: '0x3ef527805f9ac9b7cf3612416b6cb6c33913dea50cdf71e20608a6a3347d0276',
+  ENTRYPOINT_AUTHORIZATION_5_TYPE_HASH: '0xc984d9563226802b62df861b317094ab6673547312fe52b8caa2b767ad3ad9e7',
   AUTHWIT_APP_DOMAIN_TYPE_HASH: '0xa3789202450c418990e2372423a0a0e54a0d058dc6d9383200ef42ba7771668c',
-  FUNCTION_CALL_AUTHORIZATION_TYPE_HASH: '0x01a927b4325fd54e4361e60ea3218d676a454ea91baea6f9008015f6e3d2bd17',
-  EMPTY_FUNCTION_CALL_HASH: '0x0cd9a585e1c6596b006af7a9ea5ec10215b796e27b83171d6460b804ee04bca4',
+  FUNCTION_CALL_AUTHORIZATION_TYPE_HASH: '0x08d98e4671b917579fdc624cd564ad4a1dc72991e645f712654ba28219ffb5e1',
+  EMPTY_FUNCTION_CALL_HASH: '0x7a9f1abed0f17be296360bf40aff57239ffff0bd193d2e7cb1046a5e14cf8846',
 
   // From main.nr
   APP_DOMAIN_NAME_HASH: '0x35e6e01869e84854dd0110c3f3338dda29499ea7e62e4338336555bee52ea8e9',
@@ -48,10 +49,11 @@ const NOIR_CONSTANTS = {
 describe('EIP-712 Noir Compatibility', () => {
   describe('Type Hashes', () => {
     it('FUNCTION_CALL type hash should match Noir', () => {
+      // Note: selector is NOT included - it's derived from functionSignature via Poseidon2
       const computed = keccak256(
         encodePacked(
           ['string'],
-          ['FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)']
+          ['FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)']
         )
       );
       expect(computed.toLowerCase()).toBe(NOIR_CONSTANTS.FUNCTION_CALL_TYPE_HASH.toLowerCase());
@@ -70,10 +72,11 @@ describe('EIP-712 Noir Compatibility', () => {
     });
 
     it('ENTRYPOINT_AUTHORIZATION_5 type hash should match Noir', () => {
+      // Note: selector is NOT included in FunctionCall
       const typeString =
         'EntrypointAuthorization(AppDomain appDomain,FunctionCall[5] functionCalls,uint256 txNonce)' +
         'AppDomain(string name,string version,uint256 chainId,bytes32 salt)' +
-        'FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)';
+        'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)';
       const computed = keccak256(encodePacked(['string'], [typeString]));
       expect(computed.toLowerCase()).toBe(NOIR_CONSTANTS.ENTRYPOINT_AUTHORIZATION_5_TYPE_HASH.toLowerCase());
       expect(TYPE_HASHES.ENTRYPOINT_AUTHORIZATION_5.toLowerCase()).toBe(
@@ -95,10 +98,11 @@ describe('EIP-712 Noir Compatibility', () => {
     });
 
     it('FUNCTION_CALL_AUTHORIZATION type hash should match Noir', () => {
+      // Note: selector is NOT included in FunctionCall
       const typeString =
         'FunctionCallAuthorization(AuthwitAppDomain appDomain,FunctionCall functionCall)' +
         'AuthwitAppDomain(uint256 chainId,bytes32 verifyingContract)' +
-        'FunctionCall(bytes32 contract,string functionSignature,uint256 selector,uint256[] arguments,bool isPrivate)';
+        'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)';
       const computed = keccak256(encodePacked(['string'], [typeString]));
       expect(computed.toLowerCase()).toBe(NOIR_CONSTANTS.FUNCTION_CALL_AUTHORIZATION_TYPE_HASH.toLowerCase());
       expect(TYPE_HASHES.FUNCTION_CALL_AUTHORIZATION.toLowerCase()).toBe(
@@ -174,22 +178,18 @@ describe('EIP-712 Noir Compatibility', () => {
       // keccak256("") - empty string hash
       const emptySigHash = keccak256(encodePacked(['string'], ['']));
 
-      // selector = 0 for empty function calls
-      const selectorEncoded = pad(toHex(0n), { size: 32 });
-
       // keccak256(0x) - empty bytes hash (same as empty string)
       const emptyArgsHash = keccak256('0x');
 
       // isPrivate = true (1) for empty function calls
       const isPrivateEncoded = pad(toHex(1n), { size: 32 });
 
-      // Compute hashStruct(FunctionCall) with selector and isPrivate
+      // Compute hashStruct(FunctionCall) - selector NOT included
       const hash = keccak256(
         concat([
           NOIR_CONSTANTS.FUNCTION_CALL_TYPE_HASH as `0x${string}`,
           emptyContract,
           emptySigHash,
-          selectorEncoded,
           emptyArgsHash,
           isPrivateEncoded,
         ])
@@ -237,12 +237,10 @@ describe('EIP-712 Noir Compatibility', () => {
       const functionSignature = 'transfer(Field,u128)';
       const args = [456n, 789n];
       const isPrivate = true; // Default for createFunctionCall
-      const selector = 0n; // Default for createFunctionCall
 
-      // Manual computation
+      // Manual computation - selector NOT included
       const contract = pad(toHex(targetAddress), { size: 32 });
       const sigHash = keccak256(encodePacked(['string'], [functionSignature]));
-      const selectorEncoded = pad(toHex(selector), { size: 32 });
       const argsEncoded = concat(args.map((arg) => pad(toHex(arg), { size: 32 })));
       const argsHash = keccak256(argsEncoded);
       const isPrivateEncoded = pad(toHex(isPrivate ? 1n : 0n), { size: 32 });
@@ -252,13 +250,12 @@ describe('EIP-712 Noir Compatibility', () => {
           NOIR_CONSTANTS.FUNCTION_CALL_TYPE_HASH as `0x${string}`,
           contract,
           sigHash,
-          selectorEncoded,
           argsHash,
           isPrivateEncoded,
         ])
       );
 
-      // Encoder computation (isPrivate and selector default to true/0n)
+      // Encoder computation (isPrivate defaults to true)
       const call = Eip712Encoder.createFunctionCall(targetAddress, functionSignature, args);
       const encoderHash = Eip712Encoder.hashFunctionCall(call);
 
@@ -272,10 +269,9 @@ describe('EIP-712 Noir Compatibility', () => {
       // Verify it's deterministic and valid
       expect(hash).toMatch(/^0x[0-9a-f]{64}$/);
 
-      // Compute manually (isPrivate defaults to true, selector defaults to 0n)
+      // Compute manually (isPrivate defaults to true) - selector NOT included
       const contract = pad(toHex(1n), { size: 32 });
       const sigHash = keccak256(encodePacked(['string'], ['noArgs()']));
-      const selectorEncoded = pad(toHex(0n), { size: 32 }); // selector = 0
       const emptyArgsHash = keccak256('0x'); // Empty bytes
       const isPrivateEncoded = pad(toHex(1n), { size: 32 }); // true
 
@@ -284,7 +280,6 @@ describe('EIP-712 Noir Compatibility', () => {
           NOIR_CONSTANTS.FUNCTION_CALL_TYPE_HASH as `0x${string}`,
           contract,
           sigHash,
-          selectorEncoded,
           emptyArgsHash,
           isPrivateEncoded,
         ])

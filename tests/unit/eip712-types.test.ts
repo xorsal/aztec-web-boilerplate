@@ -37,8 +37,8 @@ describe('EIP-712 Types', () => {
     });
 
     it('should have correct serialized lengths', () => {
-      // 150 fields for 5-call witness (was 145, +5 for selectors)
-      expect(EIP712_WITNESS_5_SERIALIZED_LEN).toBe(150);
+      // 145 fields for 5-call witness (selector NOT included - derived from signature)
+      expect(EIP712_WITNESS_5_SERIALIZED_LEN).toBe(145);
       // 34 fields for authwit witness
       expect(EIP712_AUTHWIT_SERIALIZED_LEN).toBe(34);
     });
@@ -160,15 +160,14 @@ describe('EIP-712 Types', () => {
       //   - Function args: 20 fields
       //   - Args length: 1 field
       //   - Target address: 1 field
-      //   - Selector: 1 field (NEW)
-      //   Total per call: 29 fields (was 28, +1 for selector)
+      //   Total per call: 28 fields (selector NOT included - derived from signature)
       // - Chain ID: 1 field
       // - Salt: 1 field
-      // Total: 3 + (5 * 29) + 1 + 1 = 3 + 145 + 2 = 150
+      // Total: 3 + (5 * 28) + 1 + 1 = 3 + 140 + 2 = 145
 
       const signatureFields = 3;
-      const fieldsPerCall = 5 + 1 + MAX_SERIALIZED_ARGS + 1 + 1 + 1; // 29 (was 28, +1 for selector)
-      const callsFields = ACCOUNT_MAX_CALLS * fieldsPerCall; // 145
+      const fieldsPerCall = 5 + 1 + MAX_SERIALIZED_ARGS + 1 + 1; // 28 (selector NOT included)
+      const callsFields = ACCOUNT_MAX_CALLS * fieldsPerCall; // 140
       const metadataFields = 2; // chainId + salt
 
       const expectedTotal = signatureFields + callsFields + metadataFields;

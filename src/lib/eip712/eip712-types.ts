@@ -11,11 +11,14 @@ import type { Hex } from 'viem';
 /**
  * Function call representation for EIP-712
  * The `arguments` array IS the pre-image of args_hash - this is what makes it human-readable!
+ *
+ * Note: The selector is NOT included in the EIP-712 payload because it can be derived
+ * from the functionSignature via Poseidon2 hashing. Signing the signature implicitly
+ * commits to the selector.
  */
 export interface FunctionCall {
   contract: Hex; // bytes32 - target_address as 32 bytes
   functionSignature: string; // Full signature e.g. "transfer_private(Field,Field,u128,Field)"
-  selector: bigint; // uint256 - function selector (0n for private functions)
   arguments: bigint[]; // uint256[] - serialized args (THE PRE-IMAGE!)
   isPrivate: boolean; // Whether this is a private function call
 }
@@ -87,10 +90,10 @@ export const EIP712_TYPES_5 = {
   ],
 
   // Function call with visible arguments
+  // Note: selector is NOT included - it's derived from functionSignature via Poseidon2
   FunctionCall: [
     { name: 'contract', type: 'bytes32' },
     { name: 'functionSignature', type: 'string' },
-    { name: 'selector', type: 'uint256' },
     { name: 'arguments', type: 'uint256[]' },
     { name: 'isPrivate', type: 'bool' },
   ],
@@ -121,7 +124,6 @@ export const EMPTY_FUNCTION_CALL: FunctionCall = {
   contract:
     '0x0000000000000000000000000000000000000000000000000000000000000000',
   functionSignature: '',
-  selector: 0n,
   arguments: [],
   isPrivate: true, // Default to true for empty calls
 };
@@ -147,7 +149,7 @@ export const MAX_SERIALIZED_ARGS = 20;
 export const MAX_SIGNATURE_SIZE = 128;
 
 /** Serialized size of Eip712Witness5 (5 calls) in Fields */
-export const EIP712_WITNESS_5_SERIALIZED_LEN = 150;
+export const EIP712_WITNESS_5_SERIALIZED_LEN = 145;
 
 /** Serialized size of Eip712AuthwitWitness in Fields */
 export const EIP712_AUTHWIT_SERIALIZED_LEN = 34;

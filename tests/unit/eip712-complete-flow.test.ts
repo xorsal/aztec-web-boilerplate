@@ -48,10 +48,9 @@ describe('EIP-712 Complete Flow', () => {
 
       // Compute the message hash step by step (simulating what Noir does)
 
-      // 1. Hash the function call (including selector and isPrivate, which default to 0n and true)
+      // 1. Hash the function call (selector NOT included - derived from signature)
       const targetBytes = pad(toHex(call.targetAddress), { size: 32 });
       const sigHash = keccak256(encodePacked(['string'], [call.functionSignature]));
-      const selectorEncoded = pad(toHex(0n), { size: 32 }); // selector defaults to 0n
       const argsEncoded = call.args.length > 0
         ? concat(call.args.map((arg) => pad(toHex(arg), { size: 32 })))
         : '0x';
@@ -59,7 +58,7 @@ describe('EIP-712 Complete Flow', () => {
       const isPrivateEncoded = pad(toHex(1n), { size: 32 }); // true (default)
 
       const callHash = keccak256(
-        concat([TYPE_HASHES.FUNCTION_CALL, targetBytes, sigHash, selectorEncoded, argsHash, isPrivateEncoded])
+        concat([TYPE_HASHES.FUNCTION_CALL, targetBytes, sigHash, argsHash, isPrivateEncoded])
       );
 
       // Verify our encoder computes the same
@@ -286,8 +285,8 @@ describe('EIP-712 Complete Flow', () => {
         { toField: () => ({ toBigInt: () => 999n }), toBigInt: () => 999n } as any
       );
 
-      // Verify we have 150 fields (was 145, +5 for selectors)
-      expect(capsule.data).toHaveLength(150);
+      // Verify we have 145 fields (selector NOT included - derived from signature)
+      expect(capsule.data).toHaveLength(145);
 
       // Fields 0-2 are the signature (64 bytes packed as 31+31+2)
       const field0 = capsule.data[0].toBigInt();

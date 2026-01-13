@@ -194,22 +194,7 @@ pub contract Eip712Account {
                     "AuthWit target_address mismatch with AppPayload"
                 );
 
-                // 2. Verify args_hash matches
-                // Extract is_public flag to use the correct hash separator
-                let is_public = extract_is_public(serialized_payload, call_idx);
-                let computed_args_hash = compute_aztec_args_hash(
-                    witness.function_args[call_idx],
-                    witness.args_lengths[call_idx],
-                    is_public,
-                    witness.selectors[call_idx]
-                );
-                let stored_args_hash = extract_args_hash(serialized_payload, call_idx);
-                assert(
-                    computed_args_hash == stored_args_hash,
-                    "AuthWit args_hash mismatch with AppPayload"
-                );
-
-                // 3. Verify function_selector matches
+                // 2. Compute selector from function signature (derived, not from witness)
                 let computed_selector = compute_function_selector(
                     witness.function_signatures[call_idx],
                     witness.signature_lengths[call_idx]
@@ -220,7 +205,24 @@ pub contract Eip712Account {
                     "AuthWit function_selector mismatch with AppPayload"
                 );
 
+                // 3. Verify args_hash matches
+                // Extract is_public flag to use the correct hash separator
+                // For public functions, selector is prepended to args in the AppPayload's args_hash
+                let is_public = extract_is_public(serialized_payload, call_idx);
+                let computed_args_hash = compute_aztec_args_hash(
+                    witness.function_args[call_idx],
+                    witness.args_lengths[call_idx],
+                    is_public,
+                    computed_selector as Field // Use computed selector for args_hash
+                );
+                let stored_args_hash = extract_args_hash(serialized_payload, call_idx);
+                assert(
+                    computed_args_hash == stored_args_hash,
+                    "AuthWit args_hash mismatch with AppPayload"
+                );
+
                 // 4. Compute EIP-712 hashStruct(FunctionCall)
+                // Note: selector is NOT included in EIP-712 hash - it's derived from signature
                 // is_private is the opposite of is_public (for EIP-712 clear signing display)
                 let is_private = !is_public;
                 let target_bytes = field_to_bytes32(witness.target_addresses[call_idx]);
@@ -228,7 +230,6 @@ pub contract Eip712Account {
                     target_bytes,
                     witness.function_signatures[call_idx],
                     witness.signature_lengths[call_idx],
-                    witness.selectors[call_idx],
                     witness.function_args[call_idx],
                     witness.args_lengths[call_idx],
                     is_private
@@ -371,14 +372,13 @@ pub contract Eip712Account {
         }
 
         // Compute hashStruct(FunctionCall)
+        // Note: selector is NOT included in EIP-712 hash - it's derived from signature
         // Authwits are used for private function authorization, so is_private = true
-        // For private functions, selector is 0
         let target_bytes = field_to_bytes32(witness.target_address);
         let function_call_hash = hash_function_call(
             target_bytes,
             witness.function_signature,
             witness.signature_length,
-            0, // selector: 0 for private functions
             witness.function_args,
             witness.args_length,
             true // is_private: authwits are for private functions

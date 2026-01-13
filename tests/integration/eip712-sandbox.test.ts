@@ -177,8 +177,8 @@ describe('EIP-712 Sandbox Integration', () => {
       contractAddress
     );
 
-    // Verify capsule has 150 fields (EIP712_WITNESS_5_SERIALIZED_LEN - was 145, +5 for selectors)
-    expect(capsule.data).toHaveLength(150);
+    // Verify capsule has 145 fields (selector NOT included - derived from signature)
+    expect(capsule.data).toHaveLength(145);
     console.log('Capsule created with', capsule.data.length, 'fields');
   });
 

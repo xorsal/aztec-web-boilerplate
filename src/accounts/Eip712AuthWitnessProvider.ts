@@ -302,26 +302,22 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
   /**
    * Build EIP-712 typed data for MetaMask signing.
    *
-   * Selector is now a separate field in the FunctionCall struct, so args only
-   * contain actual function arguments (not the selector).
+   * Note: selector is NOT included in the EIP-712 payload - it's derived from
+   * the functionSignature via Poseidon2 hashing in the Noir contract.
    */
   private buildTypedData(calls: FunctionCallInput[], txNonce: bigint) {
     const encoder = new Eip712Encoder({ chainId: this.chainId });
 
     // Convert FunctionCallInput to FunctionCall format
-    // Selector is now a separate field, not prepended to args
     const functionCalls = calls.map((call) => {
       // isPrivate is the inverse of isPublic
       const isPrivate = !call.isPublic;
-      // For public functions, use the selector; for private functions, use 0n
-      const selector = call.isPublic && call.selector !== undefined ? call.selector : 0n;
 
       return Eip712Encoder.createFunctionCall(
         call.targetAddress,
         call.functionSignature,
-        call.args, // No longer prepending selector
-        isPrivate,
-        selector
+        call.args,
+        isPrivate
       );
     });
 
@@ -356,9 +352,6 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
     context.calls.forEach((call, index) => {
       console.log(`\n   [${index + 1}] ${call.functionSignature}${call.isPublic ? ' (public)' : ''}`);
       console.log(`       Target: 0x${call.targetAddress.toString(16).padStart(64, '0').slice(0, 16)}...`);
-      if (call.isPublic && call.selector !== undefined) {
-        console.log(`       Selector: ${call.selector} (0x${call.selector.toString(16)})`);
-      }
       console.log(`       Args: [${call.args.map(a => a.toString()).join(', ')}]`);
     });
 

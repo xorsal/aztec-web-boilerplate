@@ -46,7 +46,6 @@ export interface Eip712OracleData5 {
   functionArgs: bigint[][]; // [5][MAX_SERIALIZED_ARGS]
   argsLengths: number[]; // [5]
   targetAddresses: bigint[]; // [5]
-  selectors: bigint[]; // [5] - function selectors (0n for private functions)
   chainId: bigint;
   salt: Uint8Array; // 32 bytes
 }
@@ -70,8 +69,6 @@ export interface FunctionCallInput {
   args: bigint[];
   /** If true, this is a public function and args_hash should include the selector */
   isPublic?: boolean;
-  /** Function selector (required for public functions) */
-  selector?: bigint;
 }
 
 // =============================================================================
@@ -171,14 +168,13 @@ export class Eip712Account {
 
     // Convert inputs to FunctionCall format and pad to 5
     // isPrivate is the inverse of isPublic
-    // For public functions, include the selector; for private functions, use 0n
+    // Note: selector is NOT included - it's derived from functionSignature via Poseidon2
     const functionCalls: FunctionCall[] = calls.map((call) =>
       Eip712Encoder.createFunctionCall(
         call.targetAddress,
         call.functionSignature,
         call.args,
-        !call.isPublic, // isPrivate = !isPublic
-        call.isPublic && call.selector !== undefined ? call.selector : 0n
+        !call.isPublic // isPrivate = !isPublic
       )
     );
     while (functionCalls.length < ACCOUNT_MAX_CALLS) {
@@ -222,7 +218,6 @@ export class Eip712Account {
     const functionArgs: bigint[][] = [];
     const argsLengths: number[] = [];
     const targetAddresses: bigint[] = [];
-    const selectors: bigint[] = [];
 
     // Process each call (pad to ACCOUNT_MAX_CALLS)
     for (let i = 0; i < ACCOUNT_MAX_CALLS; i++) {
@@ -238,7 +233,7 @@ export class Eip712Account {
       functionSignatures.push(funcSig);
       signatureLengths.push(Math.min(sigBytes.length, MAX_SIGNATURE_SIZE));
 
-      // Function args (padded) - NO longer prepending selector
+      // Function args (padded)
       let args: bigint[] = [...call.args];
       while (args.length < MAX_SERIALIZED_ARGS) {
         args.push(0n);
@@ -247,9 +242,6 @@ export class Eip712Account {
       argsLengths.push(Math.min(call.args.length, MAX_SERIALIZED_ARGS));
 
       targetAddresses.push(call.targetAddress);
-
-      // Selector: use provided selector for public functions, 0n otherwise
-      selectors.push(call.isPublic && call.selector !== undefined ? call.selector : 0n);
     }
 
     return {
@@ -259,7 +251,6 @@ export class Eip712Account {
       functionArgs,
       argsLengths,
       targetAddresses,
-      selectors,
       chainId,
       salt,
     };
@@ -326,7 +317,9 @@ export class Eip712Account {
   }
 
   /**
-   * Serialize Eip712OracleData5 to capsule data format (150 Fields).
+   * Serialize Eip712OracleData5 to capsule data format (145 Fields).
+   *
+   * Note: selector is NOT included - it's derived from functionSignature via Poseidon2
    */
   private serializeWitness5ToCapsule(data: Eip712OracleData5): Fr[] {
     const fields: Fr[] = [];
@@ -334,7 +327,7 @@ export class Eip712Account {
     // [0-2]: Signature (64 bytes -> 3 fields: 31+31+2)
     fields.push(...this.packBytes(data.ecdsaSignature, [31, 31, 2]));
 
-    // [3-147]: 5 calls, each 29 fields (was 28, now +1 for selector)
+    // [3-142]: 5 calls, each 28 fields
     for (let callIdx = 0; callIdx < ACCOUNT_MAX_CALLS; callIdx++) {
       // Function signature (128 bytes -> 5 fields: 31+31+31+31+4)
       fields.push(
@@ -354,15 +347,12 @@ export class Eip712Account {
 
       // Target address
       fields.push(new Fr(data.targetAddresses[callIdx]));
-
-      // Selector (NEW: added as separate field)
-      fields.push(new Fr(data.selectors[callIdx]));
     }
 
-    // [148]: chain_id
+    // [143]: chain_id
     fields.push(new Fr(data.chainId));
 
-    // [149]: salt (first 31 bytes)
+    // [144]: salt (first 31 bytes)
     fields.push(this.packBytes(data.salt, [31])[0]);
 
     return fields;
@@ -375,6 +365,8 @@ export class Eip712Account {
   /**
    * Sign an individual authorization (authwit) for a single function call.
    * Used by verify_private_authwit.
+   *
+   * Note: selector is NOT included in EIP-712 - it's derived from functionSignature via Poseidon2
    */
   async signAuthwit(
     call: FunctionCallInput,
