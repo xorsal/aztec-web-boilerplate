@@ -9,7 +9,7 @@ import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
 import type { Wallet } from '@aztec/aztec.js/wallet';
-import Eip712AccountContractArtifactJson from './eip712_account-Eip712Account.json' with { type: 'json' };
+import Eip712AccountContractArtifactJson from '../../target/eip712_account-Eip712Account.json' with { type: 'json' };
 export const Eip712AccountContractArtifact = loadContractArtifact(Eip712AccountContractArtifactJson as NoirCompiledContract);
 
 

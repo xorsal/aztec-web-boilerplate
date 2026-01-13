@@ -16,6 +16,7 @@ export interface FunctionCall {
   contract: Hex; // bytes32 - target_address as 32 bytes
   functionSignature: string; // Full signature e.g. "transfer_private(Field,Field,u128,Field)"
   arguments: bigint[]; // uint256[] - serialized args (THE PRE-IMAGE!)
+  isPrivate: boolean; // Whether this is a private function call
 }
 
 /**
@@ -89,6 +90,7 @@ export const EIP712_TYPES_5 = {
     { name: 'contract', type: 'bytes32' },
     { name: 'functionSignature', type: 'string' },
     { name: 'arguments', type: 'uint256[]' },
+    { name: 'isPrivate', type: 'bool' },
   ],
 
   // Entrypoint authorization (5 function calls)
@@ -118,6 +120,7 @@ export const EMPTY_FUNCTION_CALL: FunctionCall = {
     '0x0000000000000000000000000000000000000000000000000000000000000000',
   functionSignature: '',
   arguments: [],
+  isPrivate: true, // Default to true for empty calls
 };
 
 // =============================================================================

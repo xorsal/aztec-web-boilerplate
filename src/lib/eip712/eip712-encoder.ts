@@ -57,7 +57,7 @@ export const TYPE_HASHES = {
   FUNCTION_CALL: keccak256(
     encodePacked(
       ['string'],
-      ['FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments)']
+      ['FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)']
     )
   ),
   APP_DOMAIN: keccak256(
@@ -72,7 +72,7 @@ export const TYPE_HASHES = {
       [
         'EntrypointAuthorization(AppDomain appDomain,FunctionCall[5] functionCalls,uint256 txNonce)' +
           'AppDomain(string name,string version,uint256 chainId,bytes32 salt)' +
-          'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments)',
+          'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)',
       ]
     )
   ),
@@ -88,7 +88,7 @@ export const TYPE_HASHES = {
       [
         'FunctionCallAuthorization(AuthwitAppDomain appDomain,FunctionCall functionCall)' +
           'AuthwitAppDomain(uint256 chainId,bytes32 verifyingContract)' +
-          'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments)',
+          'FunctionCall(bytes32 contract,string functionSignature,uint256[] arguments,bool isPrivate)',
       ]
     )
   ),
@@ -195,7 +195,8 @@ export class Eip712Encoder {
   static createFunctionCall(
     targetAddress: bigint | Hex,
     functionSignature: string,
-    args: bigint[]
+    args: bigint[],
+    isPrivate: boolean = true
   ): FunctionCall {
     const contract =
       typeof targetAddress === 'bigint'
@@ -216,6 +217,7 @@ export class Eip712Encoder {
       contract,
       functionSignature,
       arguments: args,
+      isPrivate,
     };
   }
 
@@ -229,9 +231,11 @@ export class Eip712Encoder {
         ? concat(call.arguments.map((arg) => pad(toHex(arg), { size: 32 })))
         : '0x';
     const argsHash = keccak256(argsEncoded);
+    // EIP-712 bool encoding: 0 for false, 1 for true (as uint256)
+    const isPrivateEncoded = pad(toHex(call.isPrivate ? 1n : 0n), { size: 32 });
 
     return keccak256(
-      concat([TYPE_HASHES.FUNCTION_CALL, call.contract, sigHash, argsHash])
+      concat([TYPE_HASHES.FUNCTION_CALL, call.contract, sigHash, argsHash, isPrivateEncoded])
     );
   }
 

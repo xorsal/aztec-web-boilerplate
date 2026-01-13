@@ -220,13 +220,16 @@ pub contract Eip712Account {
                 );
 
                 // 4. Compute EIP-712 hashStruct(FunctionCall)
+                // is_private is the opposite of is_public (for EIP-712 clear signing display)
+                let is_private = !is_public;
                 let target_bytes = field_to_bytes32(witness.target_addresses[call_idx]);
                 call_hashes[call_idx] = hash_function_call(
                     target_bytes,
                     witness.function_signatures[call_idx],
                     witness.signature_lengths[call_idx],
                     witness.function_args[call_idx],
-                    witness.args_lengths[call_idx]
+                    witness.args_lengths[call_idx],
+                    is_private
                 );
             } else {
                 // Empty call slot - use pre-computed empty hash
@@ -365,13 +368,15 @@ pub contract Eip712Account {
         }
 
         // Compute hashStruct(FunctionCall)
+        // Authwits are used for private function authorization, so is_private = true
         let target_bytes = field_to_bytes32(witness.target_address);
         let function_call_hash = hash_function_call(
             target_bytes,
             witness.function_signature,
             witness.signature_length,
             witness.function_args,
-            witness.args_length
+            witness.args_length,
+            true // is_private: authwits are for private functions
         );
 
         // Compute hashStruct(AuthwitAppDomain)

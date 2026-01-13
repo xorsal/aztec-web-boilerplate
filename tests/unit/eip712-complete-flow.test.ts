@@ -48,16 +48,17 @@ describe('EIP-712 Complete Flow', () => {
 
       // Compute the message hash step by step (simulating what Noir does)
 
-      // 1. Hash the function call
+      // 1. Hash the function call (including isPrivate, which defaults to true)
       const targetBytes = pad(toHex(call.targetAddress), { size: 32 });
       const sigHash = keccak256(encodePacked(['string'], [call.functionSignature]));
       const argsEncoded = call.args.length > 0
         ? concat(call.args.map((arg) => pad(toHex(arg), { size: 32 })))
         : '0x';
       const argsHash = keccak256(argsEncoded);
+      const isPrivateEncoded = pad(toHex(1n), { size: 32 }); // true (default)
 
       const callHash = keccak256(
-        concat([TYPE_HASHES.FUNCTION_CALL, targetBytes, sigHash, argsHash])
+        concat([TYPE_HASHES.FUNCTION_CALL, targetBytes, sigHash, argsHash, isPrivateEncoded])
       );
 
       // Verify our encoder computes the same

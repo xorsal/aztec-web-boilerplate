@@ -316,10 +316,14 @@ export class Eip712AuthWitnessProvider implements AuthWitnessProvider {
         ? [call.selector, ...call.args]
         : call.args;
 
+      // isPrivate is the inverse of isPublic
+      const isPrivate = !call.isPublic;
+
       return Eip712Encoder.createFunctionCall(
         call.targetAddress,
         call.functionSignature,
-        argsForTypedData
+        argsForTypedData,
+        isPrivate
       );
     });
 

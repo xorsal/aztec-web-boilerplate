@@ -169,11 +169,13 @@ export class Eip712Account {
     }
 
     // Convert inputs to FunctionCall format and pad to 5
+    // isPrivate is the inverse of isPublic
     const functionCalls: FunctionCall[] = calls.map((call) =>
       Eip712Encoder.createFunctionCall(
         call.targetAddress,
         call.functionSignature,
-        call.args
+        call.args,
+        !call.isPublic // isPrivate = !isPublic
       )
     );
     while (functionCalls.length < ACCOUNT_MAX_CALLS) {
@@ -379,10 +381,12 @@ export class Eip712Account {
     innerHash: bigint = 0n
   ): Promise<Eip712AuthwitOracleData> {
     // Convert to FunctionCall format
+    // isPrivate is the inverse of isPublic
     const functionCall = Eip712Encoder.createFunctionCall(
       call.targetAddress,
       call.functionSignature,
-      call.args
+      call.args,
+      !call.isPublic // isPrivate = !isPublic
     );
 
     // Build typed data

@@ -9,7 +9,7 @@ import { EthAddress } from '@aztec/aztec.js/addresses';
 import { Fr, Point } from '@aztec/aztec.js/fields';
 import { type PublicKey, PublicKeys } from '@aztec/aztec.js/keys';
 import type { Wallet } from '@aztec/aztec.js/wallet';
-import EcdsaKEthSignerAccountContractArtifactJson from './ecdsa_k_eth_signer_account-EcdsaKEthSignerAccount.json' with { type: 'json' };
+import EcdsaKEthSignerAccountContractArtifactJson from '../../target/ecdsa_k_eth_signer_account-EcdsaKEthSignerAccount.json' with { type: 'json' };
 export const EcdsaKEthSignerAccountContractArtifact = loadContractArtifact(EcdsaKEthSignerAccountContractArtifactJson as NoirCompiledContract);
 
 
