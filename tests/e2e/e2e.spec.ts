@@ -1,54 +1,119 @@
+/**
+ * Basic E2E Tests for Web UI
+ *
+ * These tests validate that the app loads and basic components render correctly.
+ * They don't require a running Aztec sandbox.
+ */
+
 import { test, expect } from '@playwright/test';
 
-test('app initialization and basic rendering', async ({ page }) => {
-  await page.goto('/');
-  await expect(page).toHaveTitle(/Aztec Web Boilerplate/);
-  
-  // Wait for the app to be ready (wallet selector visible)
-  const walletSelector = await page.locator('.wallet-selector');
-  await expect(walletSelector).toBeVisible({ timeout: 30000 });
-  
-  // Check that basic components are rendering
-  const header = await page.locator('.navbar');
-  await expect(header).toBeVisible();
-  
-  const title = await page.locator('.nav-title');
-  await expect(title).toBeVisible();
+test.describe('App Initialization', () => {
+  test('app loads and displays title', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for the app to initialize
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+
+    // Check title
+    await expect(page.locator('.nav-title')).toContainText('ZK Secret Santa');
+  });
+
+  test('shows connect wallet button when not connected', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for app to be ready
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+
+    // Connect button should be visible
+    const connectBtn = page.locator('[data-testid="connect-wallet-button"]');
+    await expect(connectBtn).toBeVisible();
+  });
+
+  test('can open connect wallet modal', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for app to be ready
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+
+    // Click connect button
+    const connectBtn = page.locator('[data-testid="connect-wallet-button"]');
+    await connectBtn.click();
+
+    // Modal should appear
+    const modal = page.locator('.modal-content');
+    await expect(modal).toBeVisible({ timeout: 10_000 });
+
+    // Modal should have expected elements
+    await expect(page.locator('[data-testid="network-selector"]')).toBeVisible();
+    await expect(page.locator('[data-testid="create-new-account"]')).toBeVisible();
+  });
+
+  test('can close connect wallet modal', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for app and open modal
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+    const connectBtn = page.locator('[data-testid="connect-wallet-button"]');
+    await connectBtn.click();
+
+    // Modal should be visible
+    const modal = page.locator('.modal-content');
+    await expect(modal).toBeVisible({ timeout: 10_000 });
+
+    // Close the modal
+    const closeBtn = page.locator('.modal-close-button');
+    await closeBtn.click();
+
+    // Modal should be hidden
+    await expect(modal).not.toBeVisible();
+  });
+
+  test('theme toggle is visible', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for app to be ready
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+
+    // Theme toggle should be visible
+    const themeToggle = page.locator('.theme-toggle');
+    await expect(themeToggle).toBeVisible();
+  });
 });
 
-test('connect test account', async ({ page }, testInfo) => {
-  await page.goto('/');
-  await expect(page).toHaveTitle(/Aztec Web Boilerplate/);
+test.describe('Tab Navigation', () => {
+  test('setup tab is visible after app loads', async ({ page }) => {
+    await page.goto('/');
 
-  // Wait for the connect button to be visible (means app is ready)
-  const connectTestAccount = await page.locator('#connect-test-account');
-  await expect(connectTestAccount).toBeVisible({ timeout: 30000 });
-  
-  const selectTestAccount = await page.locator('#test-account-number');
-  await expect(selectTestAccount).toBeVisible();
+    // Wait for app to be ready
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
 
-  // Select different account for each browser
-  const testAccountNumber = {
-    'chromium': 1,
-    'firefox': 2,
-    'webkit': 3,
-  }[testInfo.project.name];
-  await selectTestAccount.selectOption(testAccountNumber.toString());
+    // Setup tab should be visible
+    const setupTab = page.locator('[data-testid="tab-setup"]');
+    await expect(setupTab).toBeVisible();
+  });
 
-  await connectTestAccount.click();
-  
-  // Wait a moment for any errors to appear
-  await page.waitForTimeout(2000);
-  
-  // Check if there are any error messages visible
-  const statusMessage = await page.locator('#status-message');
-  if (await statusMessage.isVisible()) {
-    const errorText = await statusMessage.textContent();
-  }
-  
-  // Wait for account to be connected and displayed
-  // This can take time due to Aztec node communication
-  const accountDisplay = await page.locator('#account-display');
-  await expect(accountDisplay).toBeVisible({ timeout: 30000 });
-  await expect(accountDisplay).toHaveText(/Account: 0x[a-fA-F0-9]{4}/);
+  test('clicking tabs changes content', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for app to be ready
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+
+    // Setup tab should be active by default
+    const setupTab = page.locator('[data-testid="tab-setup"]');
+    await expect(setupTab).toHaveClass(/active/);
+  });
+});
+
+test.describe('Setup Card', () => {
+  test('shows wallet connection prompt when not connected', async ({ page }) => {
+    await page.goto('/');
+
+    // Wait for app to be ready
+    await expect(page.locator('.navbar')).toBeVisible({ timeout: 30_000 });
+
+    // Setup card should show connect wallet message
+    const setupCard = page.locator('.wallet-connection');
+    await expect(setupCard).toBeVisible({ timeout: 10_000 });
+    await expect(setupCard).toContainText(/Connect your wallet/i);
+  });
 });

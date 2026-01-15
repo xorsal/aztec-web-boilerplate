@@ -13,3 +13,14 @@ export const AVAILABLE_NETWORKS: NetworkConfig[] = [
 ];
 
 export const DEFAULT_NETWORK = SANDBOX_CONFIG;
+
+export function getNetworkConfig(name: 'sandbox' | 'devnet'): NetworkConfig {
+  switch (name) {
+    case 'sandbox':
+      return SANDBOX_CONFIG;
+    case 'devnet':
+      return DEVNET_CONFIG;
+    default:
+      return SANDBOX_CONFIG;
+  }
+}

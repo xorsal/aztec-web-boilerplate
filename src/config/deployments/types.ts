@@ -20,6 +20,7 @@ export interface DeploymentConfig {
   nodeUrl: string;
   dripperContract: ContractDeployment;
   tokenContract: ContractDeployment;
+  secretSantaContract: ContractDeployment;
   deployer: string;
   proverEnabled: boolean;
   deployedAt: string;
@@ -58,6 +59,10 @@ export const DEFAULT_SANDBOX_DEPLOYMENT: DeploymentConfig = {
     address: PLACEHOLDER_ADDRESS,
     salt: PLACEHOLDER_SALT,
   },
+  secretSantaContract: {
+    address: PLACEHOLDER_ADDRESS,
+    salt: PLACEHOLDER_SALT,
+  },
   deployer: PLACEHOLDER_ADDRESS,
   proverEnabled: false,
   deployedAt: '',
@@ -74,6 +79,10 @@ export const DEFAULT_DEVNET_DEPLOYMENT: DeploymentConfig = {
     salt: PLACEHOLDER_SALT,
   },
   tokenContract: {
+    address: PLACEHOLDER_ADDRESS,
+    salt: PLACEHOLDER_SALT,
+  },
+  secretSantaContract: {
     address: PLACEHOLDER_ADDRESS,
     salt: PLACEHOLDER_SALT,
   },

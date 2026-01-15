@@ -3,3 +3,4 @@ export { Layout } from './Layout';
 export { SettingsCard } from './SettingsCard';
 export { MainContent } from './MainContent';
 export { ContractInteractionCard } from './ContractInteractionCard';
+export { SecretSantaContent } from './SecretSantaContent';

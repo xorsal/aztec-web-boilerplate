@@ -201,6 +201,7 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
               onChange={handleNetworkChange}
               className="network-select"
               title="Select network configuration"
+              data-testid="network-selector"
             >
               <option value="" disabled>
                 Network
@@ -346,6 +347,7 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
                 type="button"
                 disabled={isActionDisabled || !hasSavedEmbeddedAccount}
                 className="modal-action-button primary"
+                data-testid="connect-existing-account"
                 title={
                   !isNetworkSelected
                     ? 'Please select a network first'
@@ -365,6 +367,7 @@ export const ConnectWalletModal: React.FC<ConnectWalletModalProps> = ({
                 type="button"
                 disabled={isActionDisabled}
                 className="modal-action-button primary"
+                data-testid="create-new-account"
                 title={
                   !isNetworkSelected
                     ? 'Please select a network first'

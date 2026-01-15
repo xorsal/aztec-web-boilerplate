@@ -6,6 +6,7 @@ import { EmbeddedContractProvider } from './EmbeddedContractProvider';
 import { ErrorProvider } from './ErrorProvider';
 import { ThemeProvider } from './ThemeProvider';
 import { UniversalWalletProvider } from './UniversalWalletProvider';
+import { SecretSantaProvider } from './SecretSantaProvider';
 
 interface AppProviderProps {
   children: ReactNode;
@@ -17,7 +18,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       <ThemeProvider>
         <ErrorProvider>
           <UniversalWalletProvider config={walletKitConfig}>
-            <EmbeddedContractProvider>{children}</EmbeddedContractProvider>
+            <EmbeddedContractProvider>
+              <SecretSantaProvider>{children}</SecretSantaProvider>
+            </EmbeddedContractProvider>
           </UniversalWalletProvider>
         </ErrorProvider>
       </ThemeProvider>

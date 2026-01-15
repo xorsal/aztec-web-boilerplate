@@ -41,6 +41,7 @@ export const Tabs: React.FC<TabsProps> = ({
               key={tab.id}
               className={`tab-trigger ${activeTab === tab.id ? 'active' : ''}`}
               onClick={() => handleTabChange(tab.id)}
+              data-testid={`tab-${tab.id}`}
             >
               <span className="tab-icon">{tab.icon}</span>
               {tab.label}

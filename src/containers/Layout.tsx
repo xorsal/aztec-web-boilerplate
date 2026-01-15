@@ -1,11 +1,12 @@
 import React from 'react';
 import { useUniversalWallet } from '../hooks';
-import { MainContent } from './MainContent';
+import { SecretSantaContent } from './SecretSantaContent';
 
 export const Layout: React.FC = () => {
   const { isInitialized, isConnected } = useUniversalWallet();
 
-  const showLayout = isConnected && isInitialized;
+  // Show layout even if not connected - the SecretSantaContent will handle the connection flow
+  const showLayout = isInitialized || isConnected;
 
   if (!showLayout) {
     return null;
@@ -13,7 +14,7 @@ export const Layout: React.FC = () => {
 
   return (
     <div className="layout-container">
-      <MainContent />
+      <SecretSantaContent />
     </div>
   );
 };

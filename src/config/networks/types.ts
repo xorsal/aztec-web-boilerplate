@@ -10,6 +10,8 @@ export interface NetworkConfig {
   dripperDeploymentSalt: string;
   tokenContractAddress: string;
   tokenDeploymentSalt: string;
+  secretSantaContractAddress: string;
+  secretSantaDeploymentSalt: string;
   proverEnabled: boolean;
   isTestnet: boolean;
 }

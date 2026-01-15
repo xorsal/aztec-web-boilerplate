@@ -31,6 +31,7 @@ import {
   DripperContractArtifact,
 } from '../src/artifacts/Dripper';
 import { TokenContractArtifact } from '../src/artifacts/Token';
+import { SecretSantaContractArtifact } from '../src/artifacts/SecretSanta';
 import {
   NETWORK_URLS,
   type NetworkType,
@@ -250,6 +251,19 @@ async function deployDripperContract(
     'constructor',
   );
 
+  // Check if already deployed
+  const instance = await deployMethod.getInstance();
+  const metadata = await deployer.getContractMetadata(instance.address);
+  if (metadata.isContractInitialized) {
+    console.log(`   ✅ Dripper already deployed at: ${instance.address.toString()}`);
+    await deployer.registerContract(instance, DripperContractArtifact);
+    return {
+      instance: null,
+      address: instance.address.toString(),
+      salt: salt.toString(),
+    };
+  }
+
   const receipt = await deployMethod
     .send({
       ...options,
@@ -302,6 +316,19 @@ async function deployTokenContract(
     'constructor_with_minter',
   );
 
+  // Check if already deployed
+  const instance = await deployMethod.getInstance();
+  const metadata = await deployer.getContractMetadata(instance.address);
+  if (metadata.isContractInitialized) {
+    console.log(`   ✅ Token already deployed at: ${instance.address.toString()}`);
+    await deployer.registerContract(instance, TokenContractArtifact);
+    return {
+      instance: null,
+      address: instance.address.toString(),
+      salt: salt.toString(),
+    };
+  }
+
   const receipt = await deployMethod
     .send({
       ...options,
@@ -328,12 +355,61 @@ async function deployTokenContract(
   };
 }
 
+async function deploySecretSantaContract(
+  pxe: PXE,
+  deployer: Wallet,
+  options: DeployOptions,
+  adminAddress: AztecAddress
+) {
+  console.log('📦 Deploying SecretSanta contract...');
+
+  // Support a separate salt for SecretSanta to allow fresh deployments
+  const salt = Fr.fromString(process.env.VITE_SECRET_SANTA_SALT || process.env.VITE_COMMON_SALT || '1337');
+
+  const deployMethod = new DeployMethod(
+    PublicKeys.default(),
+    deployer,
+    SecretSantaContractArtifact,
+    (instance, wallet) => Contract.at(instance.address, SecretSantaContractArtifact, wallet),
+    [adminAddress], // admin address
+    'constructor',
+  );
+
+  const receipt = await deployMethod
+    .send({
+      ...options,
+      contractAddressSalt: salt,
+      fee: {
+        paymentMethod: await getSponsoredFeePaymentMethod(),
+      },
+      universalDeploy: true,
+      skipInitialization: false,
+    })
+    .wait({ timeout: DEPLOY_TIMEOUT });
+
+  console.log(`   Mined at block: ${receipt.blockNumber}`);
+  console.log(`   Tx hash: ${receipt.txHash}`);
+
+  const contract = receipt.contract;
+  console.log(`   ✅ SecretSanta deployed at: ${contract.address.toString()}`);
+
+  return {
+    instance: null,
+    address: contract.address.toString(),
+    salt: salt.toString(),
+  };
+}
+
 interface DeploymentInfo {
   dripperContract: {
     address: string;
     salt: string;
   };
   tokenContract: {
+    address: string;
+    salt: string;
+  };
+  secretSantaContract: {
     address: string;
     salt: string;
   };
@@ -363,6 +439,10 @@ async function writeDeploymentConfig(
       address: deploymentInfo.tokenContract.address,
       salt: deploymentInfo.tokenContract.salt,
     },
+    secretSantaContract: {
+      address: deploymentInfo.secretSantaContract.address,
+      salt: deploymentInfo.secretSantaContract.salt,
+    },
     deployer: deploymentInfo.deployer,
     proverEnabled: PROVER_ENABLED,
     deployedAt: new Date().toISOString(),
@@ -371,11 +451,12 @@ async function writeDeploymentConfig(
   fs.writeFileSync(configFilePath, JSON.stringify(config, null, 2) + '\n');
 
   console.log('\nDeployment successful');
-  console.log(`- Network:  ${network}`);
-  console.log(`- Config:   src/config/deployments/${network}.json`);
-  console.log(`- Dripper:  ${deploymentInfo.dripperContract.address}`);
-  console.log(`- Token:    ${deploymentInfo.tokenContract.address}`);
-  console.log(`- Deployer: ${deploymentInfo.deployer}\n`);
+  console.log(`- Network:      ${network}`);
+  console.log(`- Config:       src/config/deployments/${network}.json`);
+  console.log(`- Dripper:      ${deploymentInfo.dripperContract.address}`);
+  console.log(`- Token:        ${deploymentInfo.tokenContract.address}`);
+  console.log(`- SecretSanta:  ${deploymentInfo.secretSantaContract.address}`);
+  console.log(`- Deployer:     ${deploymentInfo.deployer}\n`);
 }
 
 async function createAccountAndDeployContract() {
@@ -417,6 +498,14 @@ async function createAccountAndDeployContract() {
       AztecAddress.fromString(dripperDeploymentInfo.address)
     );
 
+    // Deploy the SecretSanta contract with deployer as admin
+    const secretSantaDeploymentInfo = await deploySecretSantaContract(
+      pxe,
+      wallet,
+      deployOptions,
+      account.getAddress()
+    );
+
     // Save the deployment info to JSON config file
     await writeDeploymentConfig(NETWORK, {
       dripperContract: {
@@ -426,6 +515,10 @@ async function createAccountAndDeployContract() {
       tokenContract: {
         address: tokenDeploymentInfo.address,
         salt: tokenDeploymentInfo.salt,
+      },
+      secretSantaContract: {
+        address: secretSantaDeploymentInfo.address,
+        salt: secretSantaDeploymentInfo.salt,
       },
       deployer: account.getAddress().toString(),
     });

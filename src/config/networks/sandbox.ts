@@ -25,9 +25,11 @@ export const SANDBOX_CONFIG: NetworkConfig = {
   nodeUrl: env.aztecNodeUrl || deployment.nodeUrl,
   dripperContractAddress: deployment.dripperContract.address,
   tokenContractAddress: deployment.tokenContract.address,
+  secretSantaContractAddress: deployment.secretSantaContract.address,
   deployerAddress: deployment.deployer,
   dripperDeploymentSalt: deployment.dripperContract.salt,
   tokenDeploymentSalt: deployment.tokenContract.salt,
+  secretSantaDeploymentSalt: deployment.secretSantaContract.salt,
   proverEnabled: env.proverEnabled,
   isTestnet: false,
 };

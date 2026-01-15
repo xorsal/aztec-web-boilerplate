@@ -41,14 +41,15 @@ const ConnectedAccount: React.FC<ConnectedAccountProps> = ({
   };
 
   return (
-    <div className="connected-account-section">
-      <span className="wallet-type">{walletName}</span>
+    <div className="connected-account-section" data-testid="connected-account">
+      <span className="wallet-type" data-testid="wallet-type">{walletName}</span>
       <button
         type="button"
         className="account-address"
         onClick={handleCopy}
         aria-label="Copy connected address"
         title="Copy address"
+        data-testid="account-address"
       >
         {displayAddress}
       </button>
@@ -56,6 +57,7 @@ const ConnectedAccount: React.FC<ConnectedAccountProps> = ({
         onClick={onDisconnect}
         type="button"
         className="disconnect-button"
+        data-testid="disconnect-button"
       >
         Disconnect
       </button>
@@ -68,7 +70,7 @@ interface ConnectButtonProps {
 }
 
 const ConnectButton: React.FC<ConnectButtonProps> = ({ onClick }) => (
-  <button onClick={onClick} className="wallet-connect-button" type="button">
+  <button onClick={onClick} className="wallet-connect-button" type="button" data-testid="connect-wallet-button">
     Connect Wallet
   </button>
 );
@@ -114,7 +116,7 @@ export const Header: React.FC = () => {
     <>
       <nav className="navbar">
         <div className="nav-container">
-          <div className="nav-title">Aztec Web Boilerplate</div>
+          <div className="nav-title">ZK Secret Santa</div>
           <div className="nav-controls">
             <div className="account-controls">{renderAccountSection()}</div>
             <ThemeToggle />

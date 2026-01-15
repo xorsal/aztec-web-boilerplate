@@ -1,5 +1,8 @@
 import { AztecAddress } from '@aztec/stdlib/aztec-address';
+import { getEnv } from '../../utils/env';
 import { NetworkConfig } from './types';
+
+const env = getEnv();
 
 /**
  * Devnet configuration for public development network.
@@ -16,9 +19,11 @@ export const DEVNET_CONFIG: NetworkConfig = {
     '0x02bc708c7f88a6bacefb7133eaf97a55d28980717c72bbd63d36d516536d9c21',
   tokenContractAddress:
     '0x1d64b9cf07d536e6b218c14256c4965abb568f02648d5ce1da6d58caea6c3639',
+  secretSantaContractAddress: AztecAddress.ZERO.toString(),
   deployerAddress: AztecAddress.ZERO.toString(),
   dripperDeploymentSalt: '1337',
   tokenDeploymentSalt: '1337',
-  proverEnabled: true,
+  secretSantaDeploymentSalt: '1337',
+  proverEnabled: env.proverEnabled,
   isTestnet: true,
 };
